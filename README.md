@@ -10,9 +10,15 @@ go install klog/cmd/klog@latest   # or download a release archive
 
 Needs `kubectl` on the PATH. Set `KLOG_KUBECTL` to use another binary.
 
+## Configuration
+
+[CONFIG.md](CONFIG.md) covers themes, environment variables, kubeconfig setup, and customization.
+
 ## Usage
 
 Pick pods with exactly one of `-l <label-selector>`, `-d <deployment>` or `-p <pod-regex>`. Add `-n <namespace>`, `--context <ctx>` and `-c <container-regex>` as needed.
+
+**For a complete reference of all commands, flags and features, see [COMMANDS.md](COMMANDS.md).**
 
 ```
 klog tail  -n shop -d checkout --level WARN
