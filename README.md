@@ -37,7 +37,7 @@ Filters (all must match):
 
 Incident kit (details in [COMMANDS.md](COMMANDS.md#incident-debugging)):
 
-- `-A N`, `-B N`, `-C N` (with `--grep`): N lines of context after, before or around each match, per pod, like grep.
+- `-A N`, `-B N`, `-C N` (with `--grep`): N log records (a line plus its stack-trace lines) of context after, before or around each match, per pod, like grep.
 - `--follow-id FIELD`: also show every line, from any pod, whose `FIELD` value matches a line that passed the filters.
 - `fetch --stats`: print a pod x level count table instead of the lines.
 

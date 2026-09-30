@@ -42,11 +42,11 @@ var maxBuffered int64 = 1_000_000
 
 func addIncident(fs *flag.FlagSet) *incidentFlags {
 	i := &incidentFlags{}
-	fs.Var(&i.after, "A", "lines of context after each --grep match")
+	fs.Var(&i.after, "A", "log records of context after each --grep match")
 	fs.Var(&i.after, "after", "same as -A")
-	fs.Var(&i.before, "B", "lines of context before each --grep match")
+	fs.Var(&i.before, "B", "log records of context before each --grep match")
 	fs.Var(&i.before, "before", "same as -B")
-	fs.Var(&i.around, "C", "lines of context before and after each --grep match; -A/-B override it")
+	fs.Var(&i.around, "C", "log records of context before and after each --grep match; -A/-B override it")
 	fs.StringVar(&i.followID, "follow-id", "", "JSON field: also show every line, from any pod, sharing its value with a line that passes the filters")
 	return i
 }

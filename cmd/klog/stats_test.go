@@ -61,6 +61,9 @@ func TestStatsAndSinceUsageMessages(t *testing.T) {
 		{"--stats is only available for fetch", append([]string{"tail", "--stats"}, tailBase...)},
 		{"--since must be positive", []string{"fetch", "-l", "a=b", "--since", "0d"}},
 		{"--since must be positive", []string{"fetch", "-l", "a=b", "--since", "0"}},
+		{"--since must be positive", []string{"fetch", "-l", "a=b", "--since-time", "2026-09-30T12:00:00Z", "--since", "0d"}},
+		{"--since must be positive", append([]string{"tail", "--since", "0"}, tailBase...)},
+		{"--since must be positive", append([]string{"tail", "--since", "0d"}, tailBase...)},
 	}
 	for _, c := range cases {
 		out, errs := &safeBuf{}, &safeBuf{}

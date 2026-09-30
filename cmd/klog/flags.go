@@ -148,6 +148,13 @@ func loadTheme(path string) (theme.Theme, error) {
 	return th, err
 }
 
+// flagSet reports whether the user passed the named flag on the command line.
+func flagSet(fs *flag.FlagSet, name string) bool {
+	set := false
+	fs.Visit(func(f *flag.Flag) { set = set || f.Name == name })
+	return set
+}
+
 func newFlagSet(name string, stderr io.Writer) *flag.FlagSet {
 	fs := flag.NewFlagSet("klog "+name, flag.ContinueOnError)
 	fs.SetOutput(stderr)

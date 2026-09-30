@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"context"
 	"errors"
-	"flag"
 	"fmt"
 	"io"
 	"os"
@@ -58,6 +57,8 @@ func runFetch(ctx context.Context, args []string, stdout, stderr io.Writer) int 
 	switch {
 	case *since < 0:
 		return usageError(stderr, errors.New("--since must not be negative"))
+	case *since == 0 && flagSet(fs, "since"):
+		return usageError(stderr, errors.New("--since must be positive"))
 	case *since > 0 && *sinceTime != "":
 		return usageError(stderr, errors.New("--since and --since-time are mutually exclusive"))
 	case *since > 0:
@@ -67,11 +68,6 @@ func runFetch(ctx context.Context, args []string, stdout, stderr io.Writer) int 
 			return usageError(stderr, fmt.Errorf("invalid --since-time %q: want RFC3339", *sinceTime))
 		}
 	default:
-		sinceSet := false
-		fs.Visit(func(f *flag.Flag) { sinceSet = sinceSet || f.Name == "since" })
-		if sinceSet {
-			return usageError(stderr, errors.New("--since must be positive"))
-		}
 		return usageError(stderr, errors.New("fetch needs --since or --since-time"))
 	}
 	var untilT time.Time

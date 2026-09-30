@@ -51,6 +51,9 @@ func runTail(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	if *since < 0 {
 		return usageError(stderr, errors.New("--since must not be negative"))
 	}
+	if *since == 0 && flagSet(fs, "since") {
+		return usageError(stderr, errors.New("--since must be positive")) // 0 would replay the whole retained history
+	}
 	if *poll <= 0 {
 		return usageError(stderr, errors.New("--poll must be positive"))
 	}

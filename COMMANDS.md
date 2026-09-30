@@ -22,7 +22,7 @@ klog tail [flags]
 
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
-| `--since` | duration | 5m | Backlog to show before following (e.g. 10m, 1h, 1d) |
+| `--since` | duration | 5m | Backlog to show before following (e.g. 10m, 1h, 1d). Must be positive; `--since 0` is a usage error |
 | `--poll` | duration | 5s | How often to look for new and deleted pods |
 | `--wait` | bool | false | Keep polling when no pods match, instead of exiting immediately |
 | `--out` | string | stdout | Append to this file instead of stdout. Each line is written to the file in one write as it is rendered, so `tail -f` on the file works and lines are never torn. The file is append-only (no atomic rename like `fetch --out`) and only one klog should write to it at a time. Nothing is printed to stdout |
@@ -212,7 +212,7 @@ Three flags for working out what happened around an error. `-A`, `-B`, `-C` and 
 A match is a line that passes every filter; `-A`/`-B`/`-C` need `--grep` and are a usage error without it. Context lines are printed even though they do not match, so `--level`, `--field` and `--exclude` do not apply to them.
 
 - Context is per pod and container: lines of one pod are never used as context for a match in another.
-- A line is printed once even when matches overlap. Context counts log records, not physical lines: a record is a line plus its stack-trace lines, and those travel with it, so `-B 1` prints the whole previous trace (header and frames) or nothing, never frames without their header, and after-context records keep their own frames. A match's own stack-trace lines stay attached to it and are not counted.
+- A line is printed once even when matches overlap. Context counts log records, not physical lines: a record is a line plus its stack-trace lines, and those travel with it, so `-B 1` prints the whole previous trace (header and frames) or nothing, never frames without their header, and after-context records keep their own frames. A match's own stack-trace lines stay attached to it and are not counted. Stack-trace lines at the very start of a log, with no header line before them, count as one record of their own.
 - There is no `--` separator between groups: in a merged multi-pod stream a separator has no meaningful position. Use `--format json` or the pod label to tell groups apart.
 - With `tail`, after-context continues across the following lines as they arrive.
 
