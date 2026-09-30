@@ -35,7 +35,21 @@ func TestLineLevel(t *testing.T) {
 		{`{"severity":"warning"}`, Warn, true},
 		{`{"lvl":"debug"}`, Debug, true},
 		{`{"severity":"ERROR","level":"INFO"}`, Info, true}, // level wins over severity
-		{`{"level":30}`, 0, false},                          // numeric levels unsupported
+		{`{"level":10}`, Trace, true},
+		{`{"level":20}`, Debug, true},
+		{`{"level":30}`, Info, true},
+		{`{"level":40}`, Warn, true},
+		{`{"level":50}`, Error, true},
+		{`{"level":60}`, Fatal, true},
+		{`{"level":35}`, Info, true}, // ranges round down to the nearest step
+		{`{"level":30.5}`, Info, true},
+		{`{"lvl":45}`, Warn, true},
+		{`{"severity":50}`, Error, true},
+		{`{"level":99}`, Fatal, true},
+		{`{"level":9}`, 0, false},
+		{`{"level":0}`, 0, false},
+		{`{"level":-30}`, 0, false},
+		{`{"level":true}`, 0, false},
 		{`{"level":"LOUD"}`, 0, false},
 		{`{"msg":"x"}`, 0, false},
 		{`plain`, 0, false},
@@ -139,6 +153,13 @@ func TestFilterLevel(t *testing.T) {
 		`{"level":"warn"}`, `{"level":"ERROR"}`, `{"level":"INFO"}`, `{"msg":"no level"}`, `plain text`)
 	want := []bool{true, true, false, false, false}
 	if !eq(got, want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+}
+
+func TestFilterNumericLevel(t *testing.T) {
+	got := keep(t, Config{MinLevel: Warn}, `{"level":30}`, `{"level":40}`, `{"level":50}`, `{"level":"warn"}`)
+	if want := []bool{false, true, true, true}; !eq(got, want) {
 		t.Fatalf("got %v, want %v", got, want)
 	}
 }
