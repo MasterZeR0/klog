@@ -212,6 +212,8 @@ func TestPrettyFlatten(t *testing.T) {
 		{"big integer stays exact", `{"msg":"m","id":12345678901234567890}`, `m  id=12345678901234567890`},
 		{"nested values are compact json", `{"msg":"m","o":{"b":1,"a":[1,"x<y"]},"t":true,"z":null}`, `m  o={"a":[1,"x<y"],"b":1} t=true z=null`},
 		{"time keys are kept without a kubectl timestamp", `{"msg":"m","ts":"2026"}`, `m  ts=2026`},
+		{"empty msg stays a pair", `{"msg":"","a":1}`, `a=1 msg=""`},
+		{"empty msg falls through to message", `{"msg":"","message":"hi"}`, `hi  msg=""`},
 		{"escape in msg is escaped", `{"msg":"x \u001b[31mRED"}`, `x \x1b[31mRED`},
 		{"escape in value is quoted", `{"msg":"m","k":"v\u001b[2Jx"}`, `m  k="v\x1b[2Jx"`},
 		{"escape in key is escaped", `{"msg":"m","a\u001b[0mb":1}`, `m  a\x1b[0mb=1`},

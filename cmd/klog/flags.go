@@ -11,6 +11,7 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"klog/internal/filter"
@@ -133,7 +134,7 @@ func loadTheme(path string) (theme.Theme, error) {
 		return theme.Default(), nil // no $HOME: nothing to read, use the defaults
 	}
 	th, err := theme.Load(filepath.Join(dir, "klog", "theme.json"))
-	if errors.Is(err, os.ErrNotExist) {
+	if errors.Is(err, os.ErrNotExist) || errors.Is(err, syscall.ENOTDIR) { // ENOTDIR: <config>/klog is a file
 		return theme.Default(), nil
 	}
 	return th, err

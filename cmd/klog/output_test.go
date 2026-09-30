@@ -87,3 +87,22 @@ func TestThemeFlagAcceptsAValidFile(t *testing.T) {
 		t.Fatalf("code %d, stderr %q, stdout\n%s", code, errs, out)
 	}
 }
+
+func TestDefaultThemePathBlockedByAFileFallsBackToDefaults(t *testing.T) {
+	setup(t)
+	cfg, err := os.UserConfigDir() // HOME was redirected by setup
+	if err != nil {
+		t.Skip("no user config dir")
+	}
+	if err := os.MkdirAll(cfg, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// <configdir>/klog is a regular file, so reading klog/theme.json fails with ENOTDIR.
+	if err := os.WriteFile(filepath.Join(cfg, "klog"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	code, out, errs := klog(t, with()...)
+	if code != 0 || !strings.Contains(out, "INFO a-one") {
+		t.Fatalf("code %d, stderr %q, stdout\n%s", code, errs, out)
+	}
+}

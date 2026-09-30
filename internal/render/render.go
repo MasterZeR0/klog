@@ -143,7 +143,7 @@ var msgKeys = []string{"msg", "message"}
 func (r *Renderer) flatten(l parse.Line, lv filter.Level, hasLevel bool) string {
 	msgKey, msg := "", ""
 	for _, k := range msgKeys {
-		if s, ok := l.JSON[k].(string); ok {
+		if s, ok := l.JSON[k].(string); ok && s != "" {
 			msgKey, msg = k, s
 			break
 		}
