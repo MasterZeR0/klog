@@ -53,3 +53,28 @@ func TestIDSetKeyIsTopLevelOnly(t *testing.T) {
 		t.Fatal("key should be a literal top-level key")
 	}
 }
+
+func TestIDSetEvictsOldestWhenFull(t *testing.T) {
+	s := newIDSetCap("id", 3)
+	for _, id := range []string{"a", "b", "c"} {
+		s.Add(jl(`{"id":"` + id + `"}`))
+	}
+	s.Add(jl(`{"id":"b"}`)) // re-adding does not refresh or grow
+	s.Add(jl(`{"id":"d"}`)) // evicts a, the oldest inserted
+	s.Add(jl(`{"id":"e"}`)) // evicts b
+	want := map[string]bool{"a": false, "b": false, "c": true, "d": true, "e": true}
+	for id, w := range want {
+		if got := s.Has(jl(`{"id":"` + id + `"}`)); got != w {
+			t.Errorf("Has(%s) = %v, want %v", id, got, w)
+		}
+	}
+	if len(s.ids) != 3 || len(s.ring) != 3 {
+		t.Fatalf("set grew past its cap: %d ids, ring %d", len(s.ids), len(s.ring))
+	}
+}
+
+func TestNewIDSetDefaultCap(t *testing.T) {
+	if NewIDSet("id").cap != 100000 {
+		t.Fatal("default cap should be 100000")
+	}
+}

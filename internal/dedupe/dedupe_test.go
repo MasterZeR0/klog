@@ -81,21 +81,33 @@ func TestRunsAreIndependent(t *testing.T) {
 	}
 }
 
-func TestHoldEmitsFirstLineWithRepeats(t *testing.T) {
+func TestStructuredEmitsFirstAtOnceThenRepeatRecord(t *testing.T) {
 	s, got := collect(true)
 	s.Push(line("a", 0))
+	if summary(*got) != "a\n" {
+		t.Fatalf("first line delayed: %q", summary(*got))
+	}
 	s.Push(line("a", 1))
 	s.Push(line("a", 2))
-	if len(*got) != 0 {
+	if len(*got) != 1 {
 		t.Fatalf("emitted before the run ended: %q", summary(*got))
 	}
 	s.Push(line("b", 3))
 	s.Flush()
-	if want := "a x2\nb\n"; summary(*got) != want {
+	if want := "a\na x2\nb\n"; summary(*got) != want {
 		t.Fatalf("got %q, want %q", summary(*got), want)
 	}
-	if !(*got)[0].Time.Equal(t0) {
-		t.Fatalf("first line lost its time: %v", (*got)[0].Time)
+	if r := (*got)[1]; r.Label != "a" || !r.Time.Equal(t0.Add(2*time.Second)) || (*got)[0].Repeats != 0 {
+		t.Fatalf("repeat record %+v must carry the last repeat's time and the first line none", r)
+	}
+}
+
+func TestStructuredLoneLineHasNoRepeatRecord(t *testing.T) {
+	s, got := collect(true)
+	s.Push(line("a", 0))
+	s.Flush()
+	if summary(*got) != "a\n" {
+		t.Fatalf("got %q", summary(*got))
 	}
 }
 

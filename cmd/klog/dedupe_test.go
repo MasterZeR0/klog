@@ -25,18 +25,27 @@ func setupDupes(t *testing.T) *testutil.Fake {
 	return f
 }
 
-func TestFetchDedupeRaw(t *testing.T) {
-	setupDupes(t)
-	code, out, errs := klog(t, with("--format", "raw", "--dedupe")...)
-	want := []string{
-		"retry",
-		"ping",
-		"… repeated 2 more times", // a-1, time of its last repeat (12:00:03), sorts before b-1's
-		"done",
-		"… repeated 2 more times", // b-1, flushed when the stream ends
+func TestDedupeRejectsRawFormat(t *testing.T) {
+	f := setupDupes(t)
+	for _, cmd := range [][]string{with("--format", "raw", "--dedupe"), append([]string{"tail", "--dedupe"}, tailBase...)} {
+		code, out, errs := klog(t, cmd...)
+		if code != 2 || out != "" || !strings.Contains(errs, "--dedupe needs --format pretty, json or template") {
+			t.Fatalf("%s: code %d, stdout %q, stderr %q", cmd[0], code, out, errs)
+		}
 	}
-	if code != 0 || !equal(lines(out), want) {
-		t.Fatalf("code %d, stderr %s, got\n%s\nwant\n%v", code, errs, out, want)
+	if calls := f.Calls(); len(calls) != 0 {
+		t.Fatalf("kubectl was called: %q", calls)
+	}
+}
+
+func TestFetchStatsRejectsDedupe(t *testing.T) {
+	f := setupDupes(t)
+	code, out, errs := klog(t, with("--stats", "--dedupe")...)
+	if code != 2 || out != "" || !strings.Contains(errs, "--stats cannot be combined with --dedupe") {
+		t.Fatalf("code %d, stdout %q, stderr %q", code, out, errs)
+	}
+	if calls := f.Calls(); len(calls) != 0 {
+		t.Fatalf("kubectl was called: %q", calls)
 	}
 }
 
@@ -53,12 +62,14 @@ func TestFetchDedupePretty(t *testing.T) {
 	}
 }
 
-func TestFetchDedupeJSONAddsRepeats(t *testing.T) {
+func TestFetchDedupeJSONAddsRepeatRecord(t *testing.T) {
 	setupDupes(t)
 	_, out, _ := klog(t, with("--format", "json", "--dedupe", "--grep", "retry|done")...)
 	ls := lines(out)
-	if len(ls) != 2 || !strings.Contains(ls[0], `"raw":"retry"`) || !strings.Contains(ls[0], `"repeats":2`) ||
-		strings.Contains(ls[1], "repeats") {
+	// the first occurrence, a record for the two repeats (time of the last), then the next line
+	if len(ls) != 3 || !strings.Contains(ls[0], `"raw":"retry"`) || strings.Contains(ls[0], "repeats") ||
+		!strings.Contains(ls[1], `"raw":"retry"`) || !strings.Contains(ls[1], `"repeats":2`) || !strings.Contains(ls[1], "12:00:03") ||
+		!strings.Contains(ls[2], `"raw":"done"`) || strings.Contains(ls[2], "repeats") {
 		t.Fatalf("got\n%s", out)
 	}
 }
@@ -66,7 +77,7 @@ func TestFetchDedupeJSONAddsRepeats(t *testing.T) {
 func TestFetchDedupeTemplateRepeats(t *testing.T) {
 	setupDupes(t)
 	_, out, _ := klog(t, with("--format", "template", "--template", "{{.Raw}} x{{.Repeats}}", "--dedupe", "--grep", "ping")...)
-	if want := []string{"ping x2"}; !equal(lines(out), want) {
+	if want := []string{"ping x0", "ping x2"}; !equal(lines(out), want) {
 		t.Fatalf("got\n%s", out)
 	}
 }
@@ -81,9 +92,12 @@ func TestFetchWithoutDedupeKeepsEverything(t *testing.T) {
 
 const summary2 = "… repeated 2 more times"
 
+// tailDedupe is tailBase with pretty output, which --dedupe needs.
+var tailDedupe = []string{"-n", "shop", "-l", "app=web", "--poll", "50ms", "--dedupe", "--format", "pretty"}
+
 func TestTailDedupeFlushesSummaryOnStreamEnd(t *testing.T) {
 	setupDupes(t) // no Hang: the fake ends both streams after their lines
-	out, _, _ := startTail(t, append([]string{"--dedupe"}, tailBase...)...)
+	out, _, _ := startTail(t, tailDedupe...)
 	waitFor(t, "both summaries", func() bool { return strings.Count(out.String(), summary2) == 2 })
 	if n := strings.Count(out.String(), "retry\n"); n != 1 {
 		t.Fatalf("retry printed %d times:\n%s", n, out.String())
@@ -92,7 +106,7 @@ func TestTailDedupeFlushesSummaryOnStreamEnd(t *testing.T) {
 
 func TestTailDedupeFlushesPendingSummaryOnCancel(t *testing.T) {
 	setupDupes(t).Hang("b-1") // b-1's run is still open when we stop; a-1's ends with "done"
-	out, _, stop := startTail(t, append([]string{"--dedupe"}, tailBase...)...)
+	out, _, stop := startTail(t, tailDedupe...)
 	waitFor(t, "a-1's summary", func() bool { return strings.Contains(out.String(), "done") })
 	waitFor(t, "b-1's first line", func() bool { return strings.Contains(out.String(), "ping") })
 	time.Sleep(300 * time.Millisecond) // let b-1's two repeats be read
@@ -104,5 +118,29 @@ func TestTailDedupeFlushesPendingSummaryOnCancel(t *testing.T) {
 	}
 	if n := strings.Count(out.String(), summary2); n != 2 {
 		t.Fatalf("b-1's summary was not flushed on cancel:\n%s", out.String())
+	}
+}
+
+// A lone "connection lost" followed by silence must show at once in json
+// output, and the repeat record of a still-open run arrives when tail is stopped.
+func TestTailDedupeJSONShowsFirstLineAtOnce(t *testing.T) {
+	f := setup(t)
+	f.SetLogs("a-1", "app", d1+" connection lost\n")
+	f.SetLogs("b-1", "app", d2+" ping\n"+d3+" ping\n"+d5+" ping\n")
+	f.Hang("a-1")
+	f.Hang("b-1")
+	out, _, stop := startTail(t, "-n", "shop", "-l", "app=web", "--poll", "50ms", "--dedupe", "--format", "json")
+	waitFor(t, "both first lines", func() bool {
+		return strings.Contains(out.String(), "connection lost") && strings.Contains(out.String(), `"raw":"ping"`)
+	})
+	time.Sleep(300 * time.Millisecond)
+	if strings.Contains(out.String(), "repeats") {
+		t.Fatalf("repeat record emitted before the run ended:\n%s", out.String())
+	}
+	if code := stop(); code != 0 {
+		t.Fatalf("exit code %d", code)
+	}
+	if n := strings.Count(out.String(), `"repeats":2`); n != 1 || strings.Count(out.String(), "connection lost") != 1 {
+		t.Fatalf("got\n%s", out.String())
 	}
 }

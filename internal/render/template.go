@@ -4,6 +4,9 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"io"
+	"os"
+	"sync/atomic"
 	"text/template"
 	"time"
 
@@ -42,6 +45,14 @@ type entry struct {
 	Repeats int // identical lines --dedupe folded into this one
 }
 
+// A template that fails on one line (say {{.JSON.req.id}} on plain text) must
+// not end the run: that line keeps the output rendered before the failure and
+// the first failure is reported once, here.
+var (
+	warnOut io.Writer = os.Stderr
+	warned  atomic.Bool
+)
+
 func (r *Renderer) writeTemplate(l parse.Line) error {
 	e := entry{Source: l.Label, Raw: l.Raw, JSON: l.JSON, Repeats: l.Repeats}
 	if !l.Time.IsZero() {
@@ -56,9 +67,9 @@ func (r *Renderer) writeTemplate(l parse.Line) error {
 	if lv, ok := filter.LineLevel(l); ok {
 		e.Level = levelNames[lv]
 	}
-	var buf bytes.Buffer // render fully first: a failing template writes nothing
-	if err := r.o.Template.Execute(&buf, e); err != nil {
-		return err
+	var buf bytes.Buffer // render fully first so the line is written in one piece
+	if err := r.o.Template.Execute(&buf, e); err != nil && warned.CompareAndSwap(false, true) {
+		fmt.Fprintf(warnOut, "klog: --template failed on a line (later failures are not reported): %v\n", err)
 	}
 	buf.WriteByte('\n')
 	_, err := r.w.Write(buf.Bytes())

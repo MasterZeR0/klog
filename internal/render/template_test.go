@@ -1,6 +1,7 @@
 package render
 
 import (
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -66,14 +67,25 @@ func TestSetTemplateErrors(t *testing.T) {
 	}
 }
 
-func TestTemplateExecErrorIsReturned(t *testing.T) {
-	o := tmplOpts(t, `{{.Msg.Nope}}`, nil)
+func TestTemplateExecErrorIsPerLineAndWarnsOnce(t *testing.T) {
+	var warn strings.Builder
+	warnOut = &warn
+	warned.Store(false)
+	t.Cleanup(func() { warnOut = os.Stderr })
+
+	o := tmplOpts(t, `{{.Raw}}|{{.JSON.req.id}}`, nil)
 	var sb strings.Builder
-	if err := New(&sb, o).Write(parse.Line{Label: "a", Raw: "x"}); err == nil {
-		t.Fatal("expected an execution error")
+	r := New(&sb, o)
+	for _, raw := range []string{"one", "two"} {
+		if err := r.Write(parse.Line{Label: "a", Raw: raw, JSON: map[string]any{"req": nil}}); err != nil {
+			t.Fatalf("exec error must not be fatal: %v", err)
+		}
 	}
-	if sb.Len() != 0 {
-		t.Fatalf("partial output %q", sb.String())
+	if got, want := sb.String(), "one|\ntwo|\n"; got != want {
+		t.Fatalf("output %q, want %q", got, want)
+	}
+	if n := strings.Count(warn.String(), "\n"); n != 1 || !strings.Contains(warn.String(), "--template") {
+		t.Fatalf("want exactly one warning, got %q", warn.String())
 	}
 }
 

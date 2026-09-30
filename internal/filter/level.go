@@ -36,20 +36,18 @@ func ParseLevel(s string) (Level, bool) {
 var levelKeys = []string{"level", "severity", "lvl"}
 
 // numericLevel maps a pino/bunyan level (10=TRACE ... 60=FATAL) to a Level.
-// Values between steps round down (35 is INFO); 60 and above are FATAL.
+// Values between steps round down (35 is INFO); anything outside 10..60 is
+// not a level.
 func numericLevel(n json.Number) (Level, bool) {
 	f, err := n.Float64()
-	if err != nil || f < 10 {
+	if err != nil || f < 10 || f > 60 {
 		return 0, false
-	}
-	if f >= 60 {
-		return Fatal, true
 	}
 	return Level(f / 10), true
 }
 
 // LineLevel reads a JSON line's level. The first present key wins.
-// Unknown names and numbers below 10 report false.
+// Unknown names and numbers outside 10..60 report false.
 func LineLevel(l parse.Line) (Level, bool) {
 	for _, k := range levelKeys {
 		v, present := l.JSON[k]

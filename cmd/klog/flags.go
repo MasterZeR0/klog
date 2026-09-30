@@ -49,7 +49,7 @@ func addCommon(fs *flag.FlagSet) *commonFlags {
 	fs.StringVar(&c.grep, "grep", "", "keep lines matching this regex")
 	fs.StringVar(&c.exclude, "exclude", "", "drop lines matching this regex")
 	fs.StringVar(&c.format, "format", "pretty", "output format: pretty, json, raw or template")
-	fs.StringVar(&c.template, "template", "", "Go text/template for --format template; fields: .Source .Time .Raw .Msg .Level .JSON")
+	fs.StringVar(&c.template, "template", "", "Go text/template for --format template; fields: .Source .Time .Raw .Msg .Level .JSON .Repeats")
 	fs.StringVar(&c.tz, "tz", "", "timezone for timestamps (e.g. America/New_York or Local; default: UTC)")
 	fs.BoolVar(&c.noFlatten, "no-flatten", false, "pretty format: print JSON lines as raw JSON instead of LEVEL msg key=val")
 	fs.BoolVar(&c.dedupe, "dedupe", false, "collapse consecutive identical lines per pod into the first plus a repeat count")

@@ -31,7 +31,7 @@ klog fetch -n shop -p '^web-' --since-time 2026-09-30T10:00:00Z --until 30m --fo
 
 Filters (all must match):
 
-- `--level WARN`: WARN and above. Reads `level`, `severity` or `lvl` from JSON lines, as a name or a pino/bunyan number (10 TRACE ... 60 FATAL). Lines without a recognised level are dropped.
+- `--level WARN`: WARN and above. Reads `level`, `severity` or `lvl` from JSON lines, as a name or a pino/bunyan number (10 TRACE ... 60 FATAL; other numbers are ignored). Lines without a recognised level are dropped.
 - `--field key=value`, `key!=value`, `key~regex`, `key>n` (also `>=`, `<`, `<=`): JSON keys, repeatable. A dotted key such as `req.user.id` walks nested objects. Numeric comparisons are false unless the value is a JSON number. Non-JSON lines are dropped. A missing key matches `!=` only.
 - `--grep`, `--exclude`: regexes on the raw line. Indented stack-trace lines stay attached to the line before them.
 
@@ -43,7 +43,7 @@ Incident kit (details in [COMMANDS.md](COMMANDS.md#incident-debugging)):
 
 `--format pretty` (default), `json` (one object per line: `source`, `time`, `raw`, `json`), `raw` or `template`.
 
-For piping: `--format template --template '{{.Source}} {{.Level}} {{.Msg}}'` renders one line per entry from `.Source`, `.Time`, `.Raw`, `.Msg`, `.Level` and `.JSON`; `--out FILE` writes `tail` output to a file (appending) as well as `fetch` output; `--dedupe` collapses consecutive identical lines per pod into the first line plus `… repeated N more times`.
+For piping: `--format template --template '{{.Source}} {{.Level}} {{.Msg}}'` renders one line per entry from `.Source`, `.Time`, `.Raw`, `.Msg`, `.Level`, `.JSON` and `.Repeats` (lines folded by `--dedupe`); `--out FILE` writes `tail` output to a file (appending) as well as `fetch` output; `--dedupe` collapses consecutive identical lines per pod into the first line plus `… repeated N more times` (in json and template output, a second record with `repeats` set; not available with `--format raw`).
 
 Save flags you use often as a profile in `<user config dir>/klog/profiles.json` (`{"checkout-prod": ["-n","shop","-d","checkout","--level","WARN"]}`) and start a command with its name. Flags after it override the profile's:
 

@@ -23,7 +23,7 @@ klog tail [flags]
 | `--since` | duration | 5m | Backlog to show before following (e.g. 10m, 1h, 1d) |
 | `--poll` | duration | 5s | How often to look for new and deleted pods |
 | `--wait` | bool | false | Keep polling when no pods match, instead of exiting immediately |
-| `--out` | string | stdout | Append to this file instead of stdout. Each line is written as it is rendered, so `tail -f` on the file works. Nothing is printed to stdout |
+| `--out` | string | stdout | Append to this file instead of stdout. Each line is written to the file in one write as it is rendered, so `tail -f` on the file works and lines are never torn. The file is append-only (no atomic rename like `fetch --out`) and only one klog should write to it at a time. Nothing is printed to stdout |
 
 **Example:**
 ```bash
@@ -128,7 +128,7 @@ All filters are optional and cumulative (all must match for a line to be kept).
 - ERROR (shows ERROR and FATAL)
 - FATAL
 
-**Numeric levels** (pino/bunyan): 10=TRACE, 20=DEBUG, 30=INFO, 40=WARN, 50=ERROR, 60=FATAL. Values between steps round down (35 is INFO); 60 and above are FATAL; below 10 has no level.
+**Numeric levels** (pino/bunyan): 10=TRACE, 20=DEBUG, 30=INFO, 40=WARN, 50=ERROR, 60=FATAL. Values between steps round down (35 is INFO); numbers below 10 or above 60 (such as 100) are not levels and are ignored.
 
 **Examples:**
 ```bash
@@ -205,7 +205,7 @@ Three flags for working out what happened around an error. `-A`, `-B`, `-C` and 
 |------|-------------|
 | `-A N`, `--after N` | Also print the N lines after each match |
 | `-B N`, `--before N` | Also print the N lines before each match |
-| `-C N` | Both; the larger of `-C` and `-A`/`-B` wins |
+| `-C N` | Both sides. As in grep, an explicit `-A` or `-B` overrides `-C` for its side, in any flag order: `-C 5 -A 0` prints 5 lines before and none after |
 
 A match is a line that passes every filter; `-A`/`-B`/`-C` need `--grep` and are a usage error without it. Context lines are printed even though they do not match, so `--level`, `--field` and `--exclude` do not apply to them.
 
@@ -224,8 +224,8 @@ klog tail  -n shop -d checkout --grep OOMKilled -B 10
 Lines that pass all the other filters are seeds. Their value of the JSON field `FIELD` is remembered, and every line from any selected pod whose `FIELD` has a remembered value is printed too, even if it fails the other filters. Use it to see a whole request after finding its error.
 
 - `FIELD` is a top-level JSON key (no dotted paths). Values that are strings, numbers or booleans count as IDs; lines without the field, and non-JSON lines, are never followed.
-- `fetch` reads every pod first and then prints, in timestamp order, all lines that share a seed's ID. This includes lines logged before the seed. The matching lines are held in memory, so a very large fetch needs a narrower `--since`.
-- `tail` is forward-only: the set grows as seeds arrive, so only lines logged after the seed is seen are followed. Earlier lines of the same request have already gone by and cannot be recovered; use `fetch` for that. Across pods, arrival order decides which line is seen first.
+- `fetch` reads every pod first and then prints, in timestamp order, all lines that share a seed's ID. This includes lines logged before the seed. The matching lines (every line, with `-A`/`-B`/`-C`) are held in memory. As a soft guard, if more than 1,000,000 lines are buffered across all pods, `fetch` stops with an error (exit 1) suggesting a narrower `--since` or a `--grep`.
+- `tail` is forward-only: the set grows as seeds arrive, so only lines logged after the seed is seen are followed. Earlier lines of the same request have already gone by and cannot be recovered; use `fetch` for that. Across pods, arrival order decides which line is seen first. To keep a long-running tail bounded, only the most recent 100,000 distinct IDs are remembered: past that the oldest inserted ID is evicted and its later lines stop being followed (unless a new seed re-adds it).
 - A followed line counts as a match for `-A`/`-B`/`-C`.
 
 ```bash
@@ -283,11 +283,16 @@ klog fetch -n shop -d checkout --since 1h --format template \
 klog tail -n shop -d checkout --format template --template '{{.JSON.requestId}}' --field requestId~.
 ```
 
-A template that does not parse is a usage error at startup. A field that is missing from a JSON line prints as `<no value>`.
+A template that does not parse is a usage error at startup. A field that is missing from a JSON line prints as `<no value>`. A template that fails on one line (for example `{{.JSON.req.id}}` on a plain-text line) does not stop the run: that line keeps the output rendered before the failure, and one warning is printed to stderr.
 
 ### Collapsing Repeats
 
-`--dedupe` (tail and fetch) collapses consecutive identical lines per pod, ignoring the kubectl timestamp. The first line is printed, followed by one `… repeated N more times` line when the run ends (a different line arrives, the stream ends or klog is interrupted). With `--format json` and `--format template` there is no summary line: the first line is printed once the run ends, with `"repeats": N` (`.Repeats`) when N is above 0, so in those formats a line can appear late on a quiet `tail`.
+`--dedupe` (tail and fetch) collapses consecutive identical lines per pod, ignoring the kubectl timestamp. The first line is printed, followed by one `… repeated N more times` line when the run ends (a different line arrives, the stream ends or klog is interrupted). With `--format json` and `--format template` there is no synthetic text line. The first line of a run is printed at once, with no `repeats` (`.Repeats` is 0). If identical lines follow, then when the run ends one more record is printed: a copy of the last repeat (same `source`, `raw` and `json`; `time` of that last repeat) with `"repeats": N` (`.Repeats`), where N is how many identical lines came after the first. A line seen once has no second record, so `repeats` is always at least 1 when present, and a record with `repeats` is a summary of N lines already printed, not a new line. In templates test `{{if .Repeats}}` to tell the two apart. `--format raw` has no room for either, so `--dedupe --format raw` is a usage error (exit 2), as is `fetch --stats --dedupe` (the counts would be of the collapsed lines).
+
+```json
+{"source":"api-1","time":"2026-09-30T12:00:01Z","raw":"connection lost"}
+{"source":"api-1","time":"2026-09-30T12:00:03Z","raw":"connection lost","repeats":2}
+```
 
 ```bash
 klog tail -n shop -d checkout --dedupe
@@ -395,7 +400,7 @@ NO_COLOR=1 klog tail --format pretty
 - **Ordering**: `tail` output is in arrival order, so ordering across pods is approximate. `fetch` sorts by kubectl timestamp.
 - **Field paths**: Dotted paths walk nested objects only, not arrays.
 - **Stack traces**: Indented lines (stack frames) attach to the preceding log line.
-- **Trace follow**: `tail --follow-id` only follows lines logged after the seed; `fetch --follow-id` holds the matching lines in memory.
+- **Trace follow**: `tail --follow-id` only follows lines logged after the seed; `fetch --follow-id` holds the matching lines in memory (error above 1,000,000 buffered lines); `tail --follow-id` remembers at most 100,000 IDs, evicting the oldest.
 - **Dedupe**: Only back-to-back identical lines collapse; a repeating multi-line stack trace is not collapsed as a unit.
 
 ---

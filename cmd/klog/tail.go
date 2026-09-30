@@ -29,7 +29,7 @@ func runTail(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	poll := durationVar(fs, "poll", 5*time.Second, "how often to look for new and deleted pods")
 	incf := addIncident(fs)
 	wait := fs.Bool("wait", false, "keep polling when no pods match instead of exiting")
-	outPath := fs.String("out", "", "append to this file (flushed per line) instead of stdout")
+	outPath := fs.String("out", "", "append to this file (one write per line) instead of stdout")
 	if code, done := parseFlags(fs, args, stderr); done {
 		return code
 	}
@@ -39,6 +39,9 @@ func runTail(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	}
 	inc, err := incf.build(c)
 	if err != nil {
+		return usageError(stderr, err)
+	}
+	if err := c.checkDedupe(); err != nil {
 		return usageError(stderr, err)
 	}
 	if *since < 0 {
@@ -73,7 +76,10 @@ func runTail(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	}
 	w := stdout
 	if *outPath != "" {
-		// os.File is unbuffered, so every rendered line reaches the file at once.
+		// The renderer builds each line in memory and writes it in one Write call
+		// on this unbuffered O_APPEND file, so a line reaches it whole. The file
+		// is append-only (no atomic rename like fetch --out) and concurrent klog
+		// processes writing to one file are not supported.
 		f, err := os.OpenFile(*outPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
 		if err != nil {
 			fmt.Fprintf(stderr, "klog: --out: %v\n", err)

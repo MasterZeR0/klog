@@ -8,18 +8,30 @@ import (
 	"klog/internal/parse"
 )
 
+// MaxIDs is how many distinct IDs an IDSet remembers before it forgets the
+// oldest, so a long-running tail has bounded memory.
+const MaxIDs = 100000
+
 // IDSet collects the values of one JSON field (--follow-id) from seed lines
-// so every line sharing a value can be shown. It is safe for concurrent use:
-// tail streams share one.
+// so every line sharing a value can be shown. It holds at most MaxIDs values;
+// past that the oldest inserted one is evicted and stops being followed. It is
+// safe for concurrent use: tail streams share one.
 type IDSet struct {
-	key string
-	mu  sync.Mutex
-	ids map[string]struct{}
+	key  string
+	cap  int
+	mu   sync.Mutex
+	ids  map[string]struct{}
+	ring []string // insertion order; next is the oldest once full
+	next int
 }
 
 // NewIDSet follows key, a literal top-level JSON key.
 // ponytail: no dotted paths; add them here if --field gains nested keys.
-func NewIDSet(key string) *IDSet { return &IDSet{key: key, ids: map[string]struct{}{}} }
+func NewIDSet(key string) *IDSet { return newIDSetCap(key, MaxIDs) }
+
+func newIDSetCap(key string, n int) *IDSet {
+	return &IDSet{key: key, cap: n, ids: map[string]struct{}{}}
+}
 
 // id reads l's value of the field. Only strings, numbers and bools count as IDs.
 func (s *IDSet) id(l parse.Line) (string, bool) {
@@ -39,7 +51,16 @@ func (s *IDSet) Add(l parse.Line) bool {
 	id, ok := s.id(l)
 	if ok {
 		s.mu.Lock()
-		s.ids[id] = struct{}{}
+		if _, in := s.ids[id]; !in {
+			if len(s.ring) < s.cap {
+				s.ring = append(s.ring, id)
+			} else {
+				delete(s.ids, s.ring[s.next])
+				s.ring[s.next] = id
+				s.next = (s.next + 1) % s.cap
+			}
+			s.ids[id] = struct{}{}
+		}
 		s.mu.Unlock()
 	}
 	return ok

@@ -3,7 +3,11 @@ package main
 import (
 	"context"
 	"strings"
+	"sync"
 	"testing"
+
+	"klog/internal/filter"
+	"klog/internal/parse"
 )
 
 func ts(sec int) string {
@@ -152,5 +156,74 @@ func TestIncidentUsageErrorsNeverCallKubectl(t *testing.T) {
 	}
 	if calls := f.Calls(); len(calls) != 0 {
 		t.Fatalf("kubectl was called: %q", calls)
+	}
+}
+
+func TestContextFlagsFollowGrepSemantics(t *testing.T) {
+	f := setup(t)
+	f.SetLogs("a-1", "app", logs([]int{1, 2, 3, 4, 5}, "x1", "x2", "boom", "y1", "y2"))
+	f.SetLogs("b-1", "app", "")
+	cases := map[string][]string{
+		"-C then -A 0":    {"-C", "1", "-A", "0"},
+		"-A 0 then -C":    {"-A", "0", "-C", "1"},
+		"-C then --after": {"-C", "1", "--after", "0"},
+	}
+	for name, extra := range cases {
+		t.Run(name, func(t *testing.T) {
+			_, out, _ := klog(t, with(append([]string{"--format", "raw", "--grep", "boom"}, extra...)...)...)
+			if want := []string{"x2", "boom"}; !equal(lines(out), want) {
+				t.Fatalf("got\n%s\nwant %q", out, want)
+			}
+		})
+	}
+	_, out, _ := klog(t, with("--format", "raw", "--grep", "boom", "-B", "0", "-C", "1")...)
+	if want := []string{"boom", "y1"}; !equal(lines(out), want) {
+		t.Fatalf("-B 0 -C 1: got\n%s", out)
+	}
+	_, out, _ = klog(t, with("--format", "raw", "--grep", "boom", "-C", "2", "-A", "1")...)
+	if want := []string{"x1", "x2", "boom", "y1"}; !equal(lines(out), want) {
+		t.Fatalf("-C 2 -A 1: got\n%s", out)
+	}
+}
+
+func TestStageBufferGuardTrips(t *testing.T) {
+	old := maxBuffered
+	maxBuffered = 3
+	t.Cleanup(func() { maxBuffered = old })
+	in, err := (&incidentFlags{followID: "traceId"}).build(common{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var barrier sync.WaitGroup
+	barrier.Add(1)
+	s := in.newStage(filter.Config{}, &barrier)
+	for i := 0; i < 5; i++ {
+		s.Feed(parse.Parse("a", `{"traceId":"t"}`))
+	}
+	if err := in.overflow(); err == nil || !strings.Contains(err.Error(), "--since") || !strings.Contains(err.Error(), "--grep") {
+		t.Fatalf("overflow() = %v", err)
+	}
+	if len(s.buf) > 3 {
+		t.Fatalf("kept buffering past the limit: %d", len(s.buf))
+	}
+	if got := s.Flush(); len(got) != 0 {
+		t.Fatalf("a tripped stage should emit nothing, got %d lines", len(got))
+	}
+}
+
+func TestFetchFollowIDBufferLimit(t *testing.T) {
+	old := maxBuffered
+	maxBuffered = 3
+	t.Cleanup(func() { maxBuffered = old })
+	f := setup(t)
+	var ls []string
+	for i := 0; i < 6; i++ {
+		ls = append(ls, `{"level":"INFO","msg":"m","traceId":"t1"}`)
+	}
+	f.SetLogs("a-1", "app", logs([]int{1, 2, 3, 4, 5, 6}, ls...))
+	f.SetLogs("b-1", "app", "")
+	code, out, errs := klog(t, with("--format", "raw", "--follow-id", "traceId")...)
+	if code != 1 || out != "" || !strings.Contains(errs, "--since") {
+		t.Fatalf("code %d, stdout %q, stderr %q", code, out, errs)
 	}
 }

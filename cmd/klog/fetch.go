@@ -41,6 +41,13 @@ func runFetch(ctx context.Context, args []string, stdout, stderr io.Writer) int 
 	if err != nil {
 		return usageError(stderr, err)
 	}
+	if err := c.checkDedupe(); err != nil {
+		return usageError(stderr, err)
+	}
+	if *showStats && c.dedupe {
+		// the counts would be of the collapsed lines, not of the logs
+		return usageError(stderr, errors.New("--stats cannot be combined with --dedupe"))
+	}
 
 	now := time.Now()
 	var sinceT time.Time
@@ -162,6 +169,11 @@ func runFetch(ctx context.Context, args []string, stdout, stderr io.Writer) int 
 	}
 	cancel()
 	wg.Wait()
+	if err := inc.overflow(); err != nil {
+		abort()
+		fmt.Fprintf(stderr, "klog: %v\n", err)
+		return 1
+	}
 	if *showStats && writeErr == nil && parent.Err() == nil {
 		if view.Format == render.JSON {
 			writeErr = counts.WriteJSON(w)
