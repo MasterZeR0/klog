@@ -52,8 +52,7 @@ type common struct {
 	kubectl run.Kubectl
 	target  resolve.Target
 	filter  filter.Config
-	format  render.Format
-	tz      *time.Location
+	view    render.Options // Format, TZ, NoFlatten, Theme; callers set Color
 }
 
 func (c *commonFlags) build() (common, error) {
@@ -87,14 +86,14 @@ func (c *commonFlags) build() (common, error) {
 	if out.filter.Exclude, err = compileOpt("--exclude", c.exclude); err != nil {
 		return out, err
 	}
-	out.format, err = render.ParseFormat(c.format)
+	out.view.Format, err = render.ParseFormat(c.format)
 	if err != nil {
 		return out, err
 	}
 	if c.tz == "" {
-		out.tz = time.UTC
+		out.view.TZ = time.UTC
 	} else {
-		out.tz, err = time.LoadLocation(c.tz)
+		out.view.TZ, err = time.LoadLocation(c.tz)
 		if err != nil {
 			return out, fmt.Errorf("invalid --tz %q: %w", c.tz, err)
 		}

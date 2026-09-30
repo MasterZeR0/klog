@@ -65,7 +65,9 @@ func runTail(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		Opts:   run.Opts{Namespace: c.target.Namespace, Follow: true, Since: *since},
 		Notify: func(m string) { fmt.Fprintln(stderr, m) },
 	}
-	renderer := render.New(stdout, c.format, useColor(stdout), c.tz)
+	view := c.view
+	view.Color = useColor(stdout)
+	renderer := render.New(stdout, view)
 
 	out := make(chan parse.Line, 256) // bounded: a slow terminal slows the runners
 	ended := make(chan *tailStream)

@@ -12,14 +12,24 @@ import (
 
 var ts = time.Date(2026, 9, 30, 12, 0, 1, 500_000_000, time.UTC)
 
-func write(t *testing.T, f Format, color bool, l parse.Line) string {
+func writeOpts(t *testing.T, o Options, ls ...parse.Line) string {
 	t.Helper()
 	var buf bytes.Buffer
-	if err := New(&buf, f, color, time.UTC).Write(l); err != nil {
-		t.Fatal(err)
+	r := New(&buf, o)
+	for _, l := range ls {
+		if err := r.Write(l); err != nil {
+			t.Fatal(err)
+		}
 	}
 	return buf.String()
 }
+
+func write(t *testing.T, f Format, color bool, l parse.Line) string {
+	t.Helper()
+	return writeOpts(t, Options{Format: f, Color: color, TZ: time.UTC}, l)
+}
+
+func esc(sgr, s string) string { return "\x1b[" + sgr + "m" + s + "\x1b[0m" }
 
 func TestParseFormat(t *testing.T) {
 	for in, want := range map[string]Format{"pretty": Pretty, "json": JSON, "raw": Raw} {
@@ -82,5 +92,103 @@ func TestJSON(t *testing.T) {
 	}
 	if _, ok := rec["json"]; ok {
 		t.Fatal("json should be omitted")
+	}
+}
+
+func TestPrettyTimestampIsStyled(t *testing.T) {
+	got := write(t, Pretty, true, parse.Line{Label: "p", Time: ts, Raw: "hello"})
+	if !strings.Contains(got, esc("2", "12:00:01.500")+" hello\n") {
+		t.Fatalf("got %q", got)
+	}
+}
+
+func TestPrettyLevelStyles(t *testing.T) {
+	opts := Options{Format: Pretty, Color: true, NoFlatten: true}
+	for lvl, sgr := range map[string]string{
+		"TRACE": "2", "DEBUG": "2", "WARN": "33", "ERROR": "1;31", "FATAL": "1;97;41",
+	} {
+		raw := `{"level":"` + lvl + `","msg":"hi"}`
+		if got := writeOpts(t, opts, parse.Parse("p", raw)); !strings.Contains(got, esc(sgr, raw)+"\n") {
+			t.Errorf("%s: got %q", lvl, got)
+		}
+	}
+	raw := `{"level":"INFO","msg":"hi"}`
+	got := writeOpts(t, opts, parse.Parse("p", raw))
+	if !strings.Contains(got, " "+raw+"\n") || strings.Contains(got, "\x1b[m") {
+		t.Errorf("INFO should be unstyled, got %q", got)
+	}
+	raw = `{"msg":"no level"}`
+	if got := writeOpts(t, opts, parse.Parse("p", raw)); !strings.Contains(got, " "+raw+"\n") {
+		t.Errorf("no level should be unstyled, got %q", got)
+	}
+}
+
+func TestPrettyStackTraceStyles(t *testing.T) {
+	opts := Options{Format: Pretty, Color: true, NoFlatten: true}
+	for raw, want := range map[string]string{
+		"\tat Foo.bar(Foo.java:1)":       esc("2", "\tat Foo.bar(Foo.java:1)"),
+		"Caused by: java.io.IOException": esc("31", "Caused by: java.io.IOException"),
+		"\tSuppressed: X":                esc("31", "\tSuppressed: X"),
+		"\t... 12 more":                  esc("2", "\t... 12 more"),
+		"... 3 common frames omitted":    esc("2", "... 3 common frames omitted"),
+		"java.lang.IOException: boom":    "java.lang.IOException: boom", // the header line is not a continuation
+	} {
+		got := writeOpts(t, opts, parse.Line{Label: "p", Raw: raw})
+		if !strings.HasSuffix(got, " "+want+"\n") {
+			t.Errorf("%q: got %q, want suffix %q", raw, got, want)
+		}
+	}
+}
+
+func TestPrettyStackTraceColourOffKeepsText(t *testing.T) {
+	got := write(t, Pretty, false, parse.Line{Label: "p", Raw: "\tat Foo"})
+	if got != "[p] \tat Foo\n" {
+		t.Fatalf("got %q", got)
+	}
+}
+
+func TestPrettyInterleavedTracesRenderLikeTheyDoAlone(t *testing.T) {
+	opts := Options{Format: Pretty, Color: true, NoFlatten: true}
+	a := []parse.Line{
+		{Label: "a-1", Raw: "java.lang.IOException: boom"}, {Label: "a-1", Raw: "\tat A.one(A.java:1)"},
+		{Label: "a-1", Raw: "Caused by: X"},
+	}
+	b := []parse.Line{
+		{Label: "b-1", Raw: "plain b"}, {Label: "b-1", Raw: "\t... 2 more"}, {Label: "b-1", Raw: "\tat B.two(B.java:2)"},
+	}
+	mixed := writeOpts(t, opts, a[0], b[0], a[1], b[1], a[2], b[2])
+	only := func(out, label string) []string {
+		var keep []string
+		for _, ln := range strings.Split(strings.TrimSuffix(out, "\n"), "\n") {
+			if strings.Contains(ln, label) {
+				keep = append(keep, ln)
+			}
+		}
+		return keep
+	}
+	for label, want := range map[string]string{"a-1": writeOpts(t, opts, a...), "b-1": writeOpts(t, opts, b...)} {
+		if got, w := strings.Join(only(mixed, label), "\n"), strings.TrimSuffix(want, "\n"); got != w {
+			t.Errorf("%s: interleaved\n%s\nalone\n%s", label, got, w)
+		}
+	}
+}
+
+func TestPrettyPadsLabelsAndNeverShrinks(t *testing.T) {
+	got := writeOpts(t, Options{Format: Pretty}, // colour off
+		parse.Line{Label: "ab", Raw: "x"}, parse.Line{Label: "abcd", Raw: "x"}, parse.Line{Label: "ab", Raw: "x"})
+	if want := "[ab] x\n[abcd] x\n[ab]   x\n"; got != want {
+		t.Fatalf("got %q, want %q", got, want)
+	}
+	coloured := writeOpts(t, Options{Format: Pretty, Color: true},
+		parse.Line{Label: "abcd", Raw: "x"}, parse.Line{Label: "ab", Raw: "x"})
+	if !strings.Contains(coloured, "\x1b[0m   x\n") { // padding sits outside the escape codes
+		t.Fatalf("got %q", coloured)
+	}
+}
+
+func TestNewZeroOptionsUsesDefaultTheme(t *testing.T) {
+	got := writeOpts(t, Options{Format: Pretty, Color: true}, parse.Line{Label: "p", Raw: "x"})
+	if !strings.HasPrefix(got, "\x1b[") || !strings.HasSuffix(got, " x\n") {
+		t.Fatalf("got %q", got)
 	}
 }
