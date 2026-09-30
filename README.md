@@ -24,6 +24,8 @@ Pick pods with exactly one of `-l <label-selector>`, `-d <deployment>` or `-p <p
 klog tail  -n shop -d checkout --level WARN
 klog tail  -n shop -l app=web --field 'requestId=abc-123' --grep timeout
 klog fetch -n shop -d checkout --since 2h --level ERROR --out errors.log
+klog fetch -n shop -d checkout --since 1h --level ERROR --follow-id traceId
+klog fetch -n shop -d checkout --since 1h --stats
 klog fetch -n shop -p '^web-' --since-time 2026-09-30T10:00:00Z --until 30m --format json
 ```
 
@@ -32,6 +34,12 @@ Filters (all must match):
 - `--level WARN`: WARN and above. Reads `level`, `severity` or `lvl` from JSON lines. Lines without a recognised level are dropped.
 - `--field key=value`, `key!=value`, `key~regex`: top-level JSON keys, repeatable. Non-JSON lines are dropped. A missing key matches `!=` only.
 - `--grep`, `--exclude`: regexes on the raw line. Indented stack-trace lines stay attached to the line before them.
+
+Incident kit (details in [COMMANDS.md](COMMANDS.md#incident-debugging)):
+
+- `-A N`, `-B N`, `-C N` (with `--grep`): N lines of context after, before or around each match, per pod, like grep.
+- `--follow-id FIELD`: also show every line, from any pod, whose `FIELD` value matches a line that passed the filters.
+- `fetch --stats`: print a pod x level count table instead of the lines.
 
 `--format pretty` (default), `json` (one object per line: `source`, `time`, `raw`, `json`) or `raw`.
 
