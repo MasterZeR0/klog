@@ -95,16 +95,24 @@ func runTail(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		go func() {
 			defer wg.Done()
 			f := filter.New(c.filter)
-			runner.Run(sctx, s, func(raw run.Raw) {
-				l := parse.Parse(raw.Label, raw.Text)
-				if !f.Keep(l) {
+			push, flush := c.stage(func(l parse.Line) {
+				select {
+				case out <- l: // room in the queue: never drop, even while stopping
 					return
+				default:
 				}
 				select {
 				case out <- l:
 				case <-sctx.Done():
 				}
 			})
+			runner.Run(sctx, s, func(raw run.Raw) {
+				l := parse.Parse(raw.Label, raw.Text)
+				if f.Keep(l) {
+					push(l)
+				}
+			})
+			flush() // stream ended or was cancelled: emit the pending summary
 			select {
 			case ended <- st:
 			case <-ctx.Done():
@@ -165,5 +173,17 @@ loop:
 	}
 	cancel()
 	wg.Wait()
+	// Lines still queued, including summaries flushed as the streams stopped.
+	for drained := false; code == 0 && !drained; {
+		select {
+		case l := <-out:
+			if err := renderer.Write(l); err != nil {
+				fmt.Fprintf(stderr, "klog: write: %v\n", err)
+				code = 1
+			}
+		default:
+			drained = true
+		}
+	}
 	return code
 }

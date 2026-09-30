@@ -32,7 +32,7 @@ type commonFlags struct {
 	level, grep, exclude, format, tz                  string
 	fields                                            multiFlag
 	theme, template                                   string
-	noFlatten                                         bool
+	noFlatten, dedupe                                 bool
 }
 
 func addCommon(fs *flag.FlagSet) *commonFlags {
@@ -51,6 +51,7 @@ func addCommon(fs *flag.FlagSet) *commonFlags {
 	fs.StringVar(&c.template, "template", "", "Go text/template for --format template; fields: .Source .Time .Raw .Msg .Level .JSON")
 	fs.StringVar(&c.tz, "tz", "", "timezone for timestamps (e.g. America/New_York or Local; default: UTC)")
 	fs.BoolVar(&c.noFlatten, "no-flatten", false, "pretty format: print JSON lines as raw JSON instead of LEVEL msg key=val")
+	fs.BoolVar(&c.dedupe, "dedupe", false, "collapse consecutive identical lines per pod into the first plus a repeat count")
 	fs.StringVar(&c.theme, "theme", "", "theme file (default: <user config dir>/klog/theme.json)")
 	return c
 }
@@ -61,6 +62,7 @@ type common struct {
 	target  resolve.Target
 	filter  filter.Config
 	view    render.Options // Format, TZ, NoFlatten, Theme; callers set Color
+	dedupe  bool
 }
 
 func (c *commonFlags) build() (common, error) {
@@ -110,6 +112,7 @@ func (c *commonFlags) build() (common, error) {
 		}
 	}
 	out.view.NoFlatten = c.noFlatten
+	out.dedupe = c.dedupe
 	if out.view.Theme, err = loadTheme(c.theme); err != nil {
 		return out, err
 	}

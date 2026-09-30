@@ -77,6 +77,19 @@ func TestTemplateExecErrorIsReturned(t *testing.T) {
 	}
 }
 
+func TestRepeatsInJSONAndTemplate(t *testing.T) {
+	l := parse.Line{Label: "a", Raw: "x", Repeats: 3}
+	if got := write(t, JSON, false, l); !strings.Contains(got, `"repeats":3`) {
+		t.Errorf("json: %q", got)
+	}
+	if got := write(t, JSON, false, parse.Line{Label: "a", Raw: "x"}); strings.Contains(got, "repeats") {
+		t.Errorf("json without repeats: %q", got)
+	}
+	if got := writeOpts(t, tmplOpts(t, `{{.Raw}} {{.Repeats}}`, nil), l); got != "x 3\n" {
+		t.Errorf("template: %q", got)
+	}
+}
+
 func TestParseFormatTemplate(t *testing.T) {
 	if got, err := ParseFormat("template"); err != nil || got != Template {
 		t.Fatalf("got %v, %v", got, err)

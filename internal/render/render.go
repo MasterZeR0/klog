@@ -79,6 +79,8 @@ type record struct {
 	Time   *time.Time     `json:"time,omitempty"`
 	Raw    string         `json:"raw"`
 	JSON   map[string]any `json:"json,omitempty"`
+
+	Repeats int `json:"repeats,omitempty"` // --dedupe: identical lines folded into this one
 }
 
 func (r *Renderer) Write(l parse.Line) error {
@@ -89,7 +91,7 @@ func (r *Renderer) Write(l parse.Line) error {
 	case Template:
 		return r.writeTemplate(l)
 	case JSON:
-		rec := record{Source: l.Label, Raw: l.Raw, JSON: l.JSON}
+		rec := record{Source: l.Label, Raw: l.Raw, JSON: l.JSON, Repeats: l.Repeats}
 		if !l.Time.IsZero() {
 			rec.Time = &l.Time
 		}

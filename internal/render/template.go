@@ -38,10 +38,12 @@ type entry struct {
 	Msg    string         // "msg" or "message" of a JSON line, else ""
 	Level  string         // TRACE..FATAL, "" when unknown
 	JSON   map[string]any // nil for plain text
+
+	Repeats int // identical lines --dedupe folded into this one
 }
 
 func (r *Renderer) writeTemplate(l parse.Line) error {
-	e := entry{Source: l.Label, Raw: l.Raw, JSON: l.JSON}
+	e := entry{Source: l.Label, Raw: l.Raw, JSON: l.JSON, Repeats: l.Repeats}
 	if !l.Time.IsZero() {
 		e.Time = l.Time.In(r.o.TZ)
 	}

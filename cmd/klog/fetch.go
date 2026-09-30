@@ -106,6 +106,12 @@ func runFetch(ctx context.Context, args []string, stdout, stderr io.Writer) int 
 			defer wg.Done()
 			defer close(ch)
 			f := filter.New(c.filter)
+			push, flush := c.stage(func(l parse.Line) {
+				select {
+				case ch <- l:
+				case <-ctx.Done():
+				}
+			})
 			first := true
 			err := runner.Run(ctx, s, func(raw run.Raw) {
 				l := parse.Parse(raw.Label, raw.Text)
@@ -122,11 +128,9 @@ func runFetch(ctx context.Context, args []string, stdout, stderr io.Writer) int 
 				if !f.Keep(l) {
 					return
 				}
-				select {
-				case ch <- l:
-				case <-ctx.Done():
-				}
+				push(l)
 			})
+			flush() // stream ended or was cancelled: emit the pending summary
 			if err != nil {
 				failed.Add(1)
 			}
