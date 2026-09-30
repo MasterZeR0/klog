@@ -29,6 +29,9 @@ const (
 // setup installs a fake kubectl with pods a-1 and b-1 (label app=web).
 func setup(t *testing.T) *testutil.Fake {
 	t.Helper()
+	// os.UserConfigDir reads these; keep the developer's real theme out of tests.
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", "")
 	f := testutil.NewFake(t)
 	t.Setenv("KLOG_KUBECTL", f.Bin)
 	f.SetGet("pods", testutil.PodList(

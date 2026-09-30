@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"sync"
@@ -16,6 +17,7 @@ import (
 	"klog/internal/render"
 	"klog/internal/resolve"
 	"klog/internal/run"
+	"klog/internal/theme"
 )
 
 type multiFlag []string
@@ -28,6 +30,8 @@ type commonFlags struct {
 	context, ns, selector, deployment, pod, container string
 	level, grep, exclude, format, tz                  string
 	fields                                            multiFlag
+	theme                                             string
+	noFlatten                                         bool
 }
 
 func addCommon(fs *flag.FlagSet) *commonFlags {
@@ -44,6 +48,8 @@ func addCommon(fs *flag.FlagSet) *commonFlags {
 	fs.StringVar(&c.exclude, "exclude", "", "drop lines matching this regex")
 	fs.StringVar(&c.format, "format", "pretty", "output format: pretty, json or raw")
 	fs.StringVar(&c.tz, "tz", "", "timezone for timestamps (e.g. America/New_York or Local; default: UTC)")
+	fs.BoolVar(&c.noFlatten, "no-flatten", false, "pretty format: print JSON lines as raw JSON instead of LEVEL msg key=val")
+	fs.StringVar(&c.theme, "theme", "", "theme file (default: <user config dir>/klog/theme.json)")
 	return c
 }
 
@@ -98,6 +104,10 @@ func (c *commonFlags) build() (common, error) {
 			return out, fmt.Errorf("invalid --tz %q: %w", c.tz, err)
 		}
 	}
+	out.view.NoFlatten = c.noFlatten
+	if out.view.Theme, err = loadTheme(c.theme); err != nil {
+		return out, err
+	}
 	return out, nil
 }
 
@@ -110,6 +120,23 @@ func compileOpt(name, expr string) (*regexp.Regexp, error) {
 		return nil, fmt.Errorf("invalid %s: %w", name, err)
 	}
 	return re, nil
+}
+
+// loadTheme reads --theme FILE, or the default file in the user config dir.
+// A missing default file means the built-in theme; a missing explicit file is an error.
+func loadTheme(path string) (theme.Theme, error) {
+	if path != "" {
+		return theme.Load(path)
+	}
+	dir, err := os.UserConfigDir()
+	if err != nil {
+		return theme.Default(), nil // no $HOME: nothing to read, use the defaults
+	}
+	th, err := theme.Load(filepath.Join(dir, "klog", "theme.json"))
+	if errors.Is(err, os.ErrNotExist) {
+		return theme.Default(), nil
+	}
+	return th, err
 }
 
 func newFlagSet(name string, stderr io.Writer) *flag.FlagSet {

@@ -29,6 +29,20 @@ Filters (all must match):
 
 `--format pretty` (default), `json` (one object per line: `source`, `time`, `raw`, `json`) or `raw`.
 
+Pretty output colours levels and stack traces on a terminal (`NO_COLOR` turns it off) and prints JSON lines as `LEVEL msg  key=val ...`; keep the raw JSON with `--no-flatten`.
+
+Colours come from `--theme FILE`, else `<user config dir>/klog/theme.json` (`~/.config/klog/theme.json` on Linux, `~/Library/Application Support/klog/theme.json` on macOS). Every value is an SGR code such as `1;31`; omitted fields keep their default:
+
+```json
+{
+  "timestamp": "2",
+  "levels": {"trace": "2", "debug": "2", "info": "", "warn": "33", "error": "1;31", "fatal": "1;97;41"},
+  "trace":  {"frame": "2", "caused_by": "31", "omitted": "2"},
+  "keys":   "36",
+  "labels": ["36", "32", "33", "35", "34", "31"]
+}
+```
+
 Exit codes: 0 ok, 1 runtime failure, 2 usage error, 3 no pods matched.
 
 ## Limits
