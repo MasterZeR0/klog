@@ -124,12 +124,17 @@ klog fetch --level DEBUG      # DEBUG, INFO, WARN, ERROR, FATAL
 
 | Flag | Type | Description |
 |------|------|-------------|
-| `--field` | string | Filter on top-level JSON keys. Repeatable. Non-JSON lines are dropped. |
+| `--field` | string | Filter on JSON keys, including nested ones by dotted path. Repeatable. Non-JSON lines are dropped. |
 
 **Syntax:**
 - `key=value` — exact match
 - `key!=value` — not equal (also matches missing keys)
 - `key~regex` — regex match on the value
+- `key>n`, `key>=n`, `key<n`, `key<=n` — numeric comparison (as float64). False unless the value is a JSON number (a string such as `"500"` does not count). `n` must be a number, else the flag is rejected.
+
+The first operator character in the expression decides, so `msg~a>b` is a regex and `x=a>b` is an exact match.
+
+**Nested keys:** `req.user.id=42` walks nested objects. A literal top-level key that contains dots (`"req.user.id"`) wins over the nested path. A missing path behaves like a missing key. Arrays are not indexed.
 
 **Examples:**
 ```bash
@@ -141,6 +146,12 @@ klog tail --field 'status!=200'
 
 # Regex match
 klog tail --field 'host~^api\.prod'
+
+# Numeric comparison
+klog tail --field 'latency>500' --field 'status>=500'
+
+# Nested key
+klog tail --field 'req.user.id=42'
 
 # Multiple filters (all must match)
 klog tail --field 'status!=200' --field 'method=POST' --field 'latency~[0-9]{4,}'
@@ -273,6 +284,7 @@ NO_COLOR=1 klog tail --format pretty
 
 - **History**: Limited to what the kubelet keeps. Logs of deleted pods are gone.
 - **Ordering**: `tail` output is in arrival order, so ordering across pods is approximate. `fetch` sorts by kubectl timestamp.
+- **Field paths**: Dotted paths walk nested objects only, not arrays.
 - **Stack traces**: Indented lines (stack frames) attach to the preceding log line.
 
 ---
