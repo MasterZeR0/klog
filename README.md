@@ -24,16 +24,33 @@ Pick pods with exactly one of `-l <label-selector>`, `-d <deployment>` or `-p <p
 klog tail  -n shop -d checkout --level WARN
 klog tail  -n shop -l app=web --field 'requestId=abc-123' --grep timeout
 klog fetch -n shop -d checkout --since 2h --level ERROR --out errors.log
+klog fetch -n shop -d checkout --since 1h --level ERROR --follow-id traceId
+klog fetch -n shop -d checkout --since 1h --stats
 klog fetch -n shop -p '^web-' --since-time 2026-09-30T10:00:00Z --until 30m --format json
 ```
 
 Filters (all must match):
 
-- `--level WARN`: WARN and above. Reads `level`, `severity` or `lvl` from JSON lines. Lines without a recognised level are dropped.
-- `--field key=value`, `key!=value`, `key~regex`: top-level JSON keys, repeatable. Non-JSON lines are dropped. A missing key matches `!=` only.
+- `--level WARN`: WARN and above. Reads `level`, `severity` or `lvl` from JSON lines, as a name or a pino/bunyan number (10 TRACE ... 60 FATAL; other numbers are ignored). Lines without a recognised level are dropped.
+- `--field key=value`, `key!=value`, `key~regex`, `key>n` (also `>=`, `<`, `<=`): JSON keys, repeatable. A dotted key such as `req.user.id` walks nested objects. Numeric comparisons are false unless the value is a JSON number. Non-JSON lines are dropped. A missing key matches `!=` only.
 - `--grep`, `--exclude`: regexes on the raw line. Indented stack-trace lines stay attached to the line before them.
 
-`--format pretty` (default), `json` (one object per line: `source`, `time`, `raw`, `json`) or `raw`.
+Incident kit (details in [COMMANDS.md](COMMANDS.md#incident-debugging)):
+
+- `-A N`, `-B N`, `-C N` (with `--grep`): N log records (a line plus its stack-trace lines) of context after, before or around each match, per pod, like grep.
+- `--follow-id FIELD`: also show every line, from any pod, whose `FIELD` value matches a line that passed the filters.
+- `fetch --stats`: print a pod x level count table instead of the lines.
+
+`--format pretty` (default), `json` (one object per line: `source`, `time`, `raw`, `json`), `raw` or `template`.
+
+For piping: `--format template --template '{{.Source}} {{.Level}} {{.Msg}}'` renders one line per entry from `.Source`, `.Time`, `.Raw`, `.Msg`, `.Level`, `.JSON` and `.Repeats` (lines folded by `--dedupe`); `--out FILE` writes `tail` output to a file (appending) as well as `fetch` output; `--dedupe` collapses consecutive identical lines per pod into the first line plus `… repeated N more times` (`1 more time` for one; in json and template output, a second record with `repeats` set; not available with `--format raw`).
+
+Save flags you use often as a profile in `<user config dir>/klog/profiles.json` (`{"checkout-prod": ["-n","shop","-d","checkout","--level","WARN"]}`) and start a command with its name. Flags after it override the profile's:
+
+```
+klog tail @checkout-prod
+klog fetch @checkout-prod --since 2h --level ERROR
+```
 
 Pretty output colours levels and stack traces on a terminal (`NO_COLOR` turns it off) and prints JSON lines as `LEVEL msg  key=val ...`; keep the raw JSON with `--no-flatten`.
 
@@ -53,10 +70,9 @@ Exit codes: 0 ok, 1 runtime failure, 2 usage error, 3 no pods matched.
 
 ## Limits
 
+- `--field` dotted paths do not index into arrays.
 - History is whatever the kubelet still keeps. Logs of deleted pods are gone.
 - `tail` output is in arrival order, so ordering across pods is approximate. `fetch` sorts by kubectl timestamp.
-- Durations accept Go units up to hours (`48h`, not `2d`).
-- Numeric log levels (for example pino `30`) are not supported.
 
 ## Test
 

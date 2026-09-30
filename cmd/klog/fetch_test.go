@@ -163,6 +163,8 @@ func TestFetchUsageErrorsNeverCallKubectl(t *testing.T) {
 		"two targets":        {"fetch", "-l", "a=b", "-d", "web", "--since", "1h"},
 		"no since":           {"fetch", "-l", "a=b"},
 		"both since":         {"fetch", "-l", "a=b", "--since", "1h", "--since-time", "2026-01-01T00:00:00Z"},
+		"bad since unit":     {"fetch", "-l", "a=b", "--since", "2x"},
+		"bad until unit":     with("--until", "2x"),
 		"bad since-time":     {"fetch", "-l", "a=b", "--since-time", "yesterday"},
 		"until before since": with("--until", "2026-01-01T00:00:00Z"),
 		"stray argument":     with("oops"),
@@ -225,6 +227,11 @@ func TestFetchRetentionGapWarning(t *testing.T) {
 	// Earliest line of a-1 (12:00:01) is later than --since-time 11:00:00.
 	_, _, errs := klog(t, "fetch", "-n", "shop", "-l", "app=web", "--since-time", "2026-09-30T11:00:00Z")
 	if !strings.Contains(errs, "earliest line for [a-1]") {
+		t.Fatalf("stderr %q", errs)
+	}
+	// Both times are UTC even when --since-time was given with an offset.
+	_, _, errs = klog(t, "fetch", "-n", "shop", "-l", "app=web", "--since-time", "2026-09-30T13:00:00+02:00")
+	if !strings.Contains(errs, "is 2026-09-30T12:00:01Z, later than the requested start 2026-09-30T11:00:00Z;") {
 		t.Fatalf("stderr %q", errs)
 	}
 	// since-time at or after the first line: no warning for a-1.

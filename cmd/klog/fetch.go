@@ -12,22 +12,24 @@ import (
 	"sync/atomic"
 	"time"
 
-	"klog/internal/filter"
 	"klog/internal/merge"
 	"klog/internal/parse"
 	"klog/internal/render"
 	"klog/internal/resolve"
 	"klog/internal/run"
+	"klog/internal/stats"
 )
 
 func runFetch(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	fs := newFlagSet("fetch", stderr)
 	cf := addCommon(fs)
-	since := fs.Duration("since", 0, "how far back to fetch, for example 2h (largest unit: h)")
+	since := durationVar(fs, "since", 0, "how far back to fetch, for example 2h or 2d")
 	sinceTime := fs.String("since-time", "", "absolute start time, RFC3339")
 	until := fs.String("until", "", "end time: RFC3339, or a duration meaning that long ago")
 	previous := fs.Bool("previous", false, "logs of the previous container instance")
 	outPath := fs.String("out", "", "write to this file (atomically) instead of stdout")
+	incf := addIncident(fs)
+	showStats := fs.Bool("stats", false, "print a per-pod x level count table instead of the lines")
 	if code, done := parseFlags(fs, args, stderr); done {
 		return code
 	}
@@ -35,12 +37,28 @@ func runFetch(ctx context.Context, args []string, stdout, stderr io.Writer) int 
 	if err != nil {
 		return usageError(stderr, err)
 	}
+	inc, err := incf.build(c)
+	if err != nil {
+		return usageError(stderr, err)
+	}
+	if err := c.checkDedupe(); err != nil {
+		return usageError(stderr, err)
+	}
+	if *showStats && c.dedupe {
+		// the counts would be of the collapsed lines, not of the logs
+		return usageError(stderr, errors.New("--stats cannot be combined with --dedupe"))
+	}
+	if *showStats && c.view.Format != render.Pretty && c.view.Format != render.JSON {
+		return usageError(stderr, errors.New("--stats needs --format pretty or json"))
+	}
 
 	now := time.Now()
 	var sinceT time.Time
 	switch {
 	case *since < 0:
 		return usageError(stderr, errors.New("--since must not be negative"))
+	case *since == 0 && flagSet(fs, "since"):
+		return usageError(stderr, errors.New("--since must be positive"))
 	case *since > 0 && *sinceTime != "":
 		return usageError(stderr, errors.New("--since and --since-time are mutually exclusive"))
 	case *since > 0:
@@ -97,6 +115,11 @@ func runFetch(ctx context.Context, args []string, stdout, stderr io.Writer) int 
 
 	var wg sync.WaitGroup
 	var failed atomic.Int32
+	var barrier *sync.WaitGroup // fetch --follow-id: every stream is read before any line is emitted
+	if inc.ids != nil {
+		barrier = &sync.WaitGroup{}
+		barrier.Add(len(streams))
+	}
 	srcs := make([]<-chan parse.Line, len(streams))
 	for i, s := range streams {
 		ch := make(chan parse.Line, 64)
@@ -105,7 +128,13 @@ func runFetch(ctx context.Context, args []string, stdout, stderr io.Writer) int 
 		go func() {
 			defer wg.Done()
 			defer close(ch)
-			f := filter.New(c.filter)
+			stg := inc.newStage(c.filter, barrier)
+			push, flush := c.stage(func(l parse.Line) {
+				select {
+				case ch <- l:
+				case <-ctx.Done():
+				}
+			})
 			first := true
 			err := runner.Run(ctx, s, func(raw run.Raw) {
 				l := parse.Parse(raw.Label, raw.Text)
@@ -113,20 +142,20 @@ func runFetch(ctx context.Context, args []string, stdout, stderr io.Writer) int 
 					first = false
 					if l.Time.After(sinceT) {
 						fmt.Fprintf(stderr, "klog: warning: earliest line for [%s] is %s, later than the requested start %s; older logs may be rotated away or the pod started later\n",
-							s.Label, l.Time.Format(time.RFC3339), sinceT.Format(time.RFC3339))
+							s.Label, l.Time.UTC().Format(time.RFC3339), sinceT.UTC().Format(time.RFC3339))
 					}
 				}
 				if !untilT.IsZero() && !l.Time.IsZero() && l.Time.After(untilT) {
 					return
 				}
-				if !f.Keep(l) {
-					return
-				}
-				select {
-				case ch <- l:
-				case <-ctx.Done():
+				for _, o := range stg.Feed(l) {
+					push(o)
 				}
 			})
+			for _, o := range stg.Flush() {
+				push(o)
+			}
+			flush() // stream ended or was cancelled: emit the pending summary
 			if err != nil {
 				failed.Add(1)
 			}
@@ -134,14 +163,29 @@ func runFetch(ctx context.Context, args []string, stdout, stderr io.Writer) int 
 	}
 
 	var writeErr error
+	counts := stats.New()
 	for l := range merge.Merge(ctx, srcs) {
-		if writeErr = renderer.Write(l); writeErr != nil {
+		if *showStats {
+			counts.Add(l)
+		} else if writeErr = renderer.Write(l); writeErr != nil {
 			cancel() // stops the streams and the merger; every goroutine selects on ctx.Done()
 			break
 		}
 	}
 	cancel()
 	wg.Wait()
+	if err := inc.overflow(); err != nil {
+		abort()
+		fmt.Fprintf(stderr, "klog: %v\n", err)
+		return 1
+	}
+	if *showStats && writeErr == nil && parent.Err() == nil {
+		if view.Format == render.JSON {
+			writeErr = counts.WriteJSON(w)
+		} else {
+			writeErr = counts.WriteText(w)
+		}
+	}
 
 	switch {
 	case writeErr != nil:

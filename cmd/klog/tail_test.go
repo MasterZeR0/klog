@@ -142,6 +142,8 @@ func TestTailUsageErrorsNeverCallKubectl(t *testing.T) {
 		"bad field":   {"-l", "a=b", "--field", "nope"},
 		"bad poll":    {"-l", "a=b", "--poll", "0s"},
 		"bad since":   {"-l", "a=b", "--since", "-1m"},
+		"bad unit":    {"-l", "a=b", "--since", "2x"},
+		"negative d":  {"-l", "a=b", "--since", "-2d"},
 		"no target":   {},
 		"bad exclude": {"-l", "a=b", "--exclude", "("},
 	} {

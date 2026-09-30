@@ -5,10 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"sync"
 	"time"
 
-	"klog/internal/filter"
 	"klog/internal/parse"
 	"klog/internal/render"
 	"klog/internal/resolve"
@@ -25,18 +25,34 @@ type tailStream struct {
 func runTail(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	fs := newFlagSet("tail", stderr)
 	cf := addCommon(fs)
-	since := fs.Duration("since", 5*time.Minute, "backlog to show before following, for example 10m")
-	poll := fs.Duration("poll", 5*time.Second, "how often to look for new and deleted pods")
+	since := durationVar(fs, "since", 5*time.Minute, "backlog to show before following, for example 10m or 1d")
+	poll := durationVar(fs, "poll", 5*time.Second, "how often to look for new and deleted pods")
+	incf := addIncident(fs)
 	wait := fs.Bool("wait", false, "keep polling when no pods match instead of exiting")
+	outPath := fs.String("out", "", "append to this file (one write per line) instead of stdout")
+	stats := fs.Bool("stats", false, "not available for tail; use fetch --stats")
 	if code, done := parseFlags(fs, args, stderr); done {
 		return code
+	}
+	if *stats {
+		return usageError(stderr, errors.New("--stats is only available for fetch"))
 	}
 	c, err := cf.build()
 	if err != nil {
 		return usageError(stderr, err)
 	}
+	inc, err := incf.build(c)
+	if err != nil {
+		return usageError(stderr, err)
+	}
+	if err := c.checkDedupe(); err != nil {
+		return usageError(stderr, err)
+	}
 	if *since < 0 {
 		return usageError(stderr, errors.New("--since must not be negative"))
+	}
+	if *since == 0 && flagSet(fs, "since") {
+		return usageError(stderr, errors.New("--since must be positive")) // 0 would replay the whole retained history
 	}
 	if *poll <= 0 {
 		return usageError(stderr, errors.New("--poll must be positive"))
@@ -65,9 +81,23 @@ func runTail(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		Opts:   run.Opts{Namespace: c.target.Namespace, Follow: true, Since: *since},
 		Notify: func(m string) { fmt.Fprintln(stderr, m) },
 	}
+	w := stdout
+	if *outPath != "" {
+		// The renderer builds each line in memory and writes it in one Write call
+		// on this unbuffered O_APPEND file, so a line reaches it whole. The file
+		// is append-only (no atomic rename like fetch --out) and concurrent klog
+		// processes writing to one file are not supported.
+		f, err := os.OpenFile(*outPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+		if err != nil {
+			fmt.Fprintf(stderr, "klog: --out: %v\n", err)
+			return 1
+		}
+		defer f.Close()
+		w = f
+	}
 	view := c.view
-	view.Color = useColor(stdout)
-	renderer := render.New(stdout, view)
+	view.Color = *outPath == "" && useColor(stdout)
+	renderer := render.New(w, view)
 
 	out := make(chan parse.Line, 256) // bounded: a slow terminal slows the runners
 	ended := make(chan *tailStream)
@@ -81,17 +111,24 @@ func runTail(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			f := filter.New(c.filter)
-			runner.Run(sctx, s, func(raw run.Raw) {
-				l := parse.Parse(raw.Label, raw.Text)
-				if !f.Keep(l) {
+			stg := inc.newStage(c.filter, nil)
+			push, flush := c.stage(func(l parse.Line) {
+				select {
+				case out <- l: // room in the queue: never drop, even while stopping
 					return
+				default:
 				}
 				select {
 				case out <- l:
 				case <-sctx.Done():
 				}
 			})
+			runner.Run(sctx, s, func(raw run.Raw) {
+				for _, l := range stg.Feed(parse.Parse(raw.Label, raw.Text)) {
+					push(l)
+				}
+			})
+			flush() // stream ended or was cancelled: emit the pending summary
 			select {
 			case ended <- st:
 			case <-ctx.Done():
@@ -152,5 +189,17 @@ loop:
 	}
 	cancel()
 	wg.Wait()
+	// Lines still queued, including summaries flushed as the streams stopped.
+	for drained := false; code == 0 && !drained; {
+		select {
+		case l := <-out:
+			if err := renderer.Write(l); err != nil {
+				fmt.Fprintf(stderr, "klog: write: %v\n", err)
+				code = 1
+			}
+		default:
+			drained = true
+		}
+	}
 	return code
 }

@@ -112,7 +112,11 @@ func TestPrettyLevelStyles(t *testing.T) {
 			t.Errorf("%s: got %q", lvl, got)
 		}
 	}
-	raw := `{"level":"INFO","msg":"hi"}`
+	raw := `{"level":50,"msg":"hi"}`
+	if got := writeOpts(t, opts, parse.Parse("p", raw)); !strings.Contains(got, esc("1;31", raw)+"\n") {
+		t.Errorf("numeric ERROR: got %q", got)
+	}
+	raw = `{"level":"INFO","msg":"hi"}`
 	got := writeOpts(t, opts, parse.Parse("p", raw))
 	if !strings.Contains(got, " "+raw+"\n") || strings.Contains(got, "\x1b[m") {
 		t.Errorf("INFO should be unstyled, got %q", got)
@@ -203,7 +207,9 @@ func TestPrettyFlatten(t *testing.T) {
 		{"message alias", `{"message":"hi"}`, `hi`},
 		{"msg wins and message is kept", `{"msg":"a","message":"b"}`, `a  message=b`},
 		{"non-string msg is kept", `{"msg":5}`, `msg=5`},
-		{"numeric level is kept", `{"level":30,"msg":"m"}`, `m  level=30`},
+		{"numeric level is labelled", `{"level":30,"msg":"m","a":1}`, `INFO m  a=1`},
+		{"numeric level range rounds down", `{"lvl":55,"msg":"m"}`, `ERROR m`},
+		{"unknown numeric level is kept", `{"level":5,"msg":"m"}`, `m  level=5`},
 		{"empty object falls back to raw", `{}`, `{}`},
 		{"empty string value is quoted", `{"msg":"m","e":""}`, `m  e=""`},
 		{"spaces and quotes are quoted", `{"msg":"m","k":"a b","q":"say \"hi\""}`, `m  k="a b" q="say \"hi\""`},
