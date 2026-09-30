@@ -192,3 +192,82 @@ func TestNewZeroOptionsUsesDefaultTheme(t *testing.T) {
 		t.Fatalf("got %q", got)
 	}
 }
+
+func TestPrettyFlatten(t *testing.T) {
+	tests := []struct{ name, in, want string }{
+		{"level msg and sorted keys", `{"level":"INFO","msg":"hello","b":2,"a":"x"}`, `INFO hello  a=x b=2`},
+		{"level alias is normalised", `{"severity":"warning","msg":"m"}`, `WARN m`},
+		{"no msg", `{"level":"WARN","a":1}`, `WARN  a=1`},
+		{"no level", `{"msg":"hi","a":1}`, `hi  a=1`},
+		{"msg only", `{"msg":"hi"}`, `hi`},
+		{"message alias", `{"message":"hi"}`, `hi`},
+		{"msg wins and message is kept", `{"msg":"a","message":"b"}`, `a  message=b`},
+		{"non-string msg is kept", `{"msg":5}`, `msg=5`},
+		{"numeric level is kept", `{"level":30,"msg":"m"}`, `m  level=30`},
+		{"empty object falls back to raw", `{}`, `{}`},
+		{"empty string value is quoted", `{"msg":"m","e":""}`, `m  e=""`},
+		{"spaces and quotes are quoted", `{"msg":"m","k":"a b","q":"say \"hi\""}`, `m  k="a b" q="say \"hi\""`},
+		{"newline in value is escaped", `{"msg":"m","n":"l1\nl2"}`, `m  n="l1\nl2"`},
+		{"newline in msg is escaped", `{"msg":"a\nb"}`, `a\nb`},
+		{"big integer stays exact", `{"msg":"m","id":12345678901234567890}`, `m  id=12345678901234567890`},
+		{"nested values are compact json", `{"msg":"m","o":{"b":1,"a":[1,"x<y"]},"t":true,"z":null}`, `m  o={"a":[1,"x<y"],"b":1} t=true z=null`},
+		{"time keys are kept without a kubectl timestamp", `{"msg":"m","ts":"2026"}`, `m  ts=2026`},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := writeOpts(t, Options{Format: Pretty}, parse.Parse("p", tc.in))
+			if want := "[p] " + tc.want + "\n"; got != want {
+				t.Fatalf("got %q, want %q", got, want)
+			}
+		})
+	}
+}
+
+func TestPrettyFlattenDropsTimeKeysWhenKubectlTimeIsShown(t *testing.T) {
+	l := parse.Parse("p", "2026-09-30T12:00:01.5Z "+`{"msg":"m","ts":"a","time":"b","timestamp":"c","a":1}`)
+	got := writeOpts(t, Options{Format: Pretty, TZ: time.UTC}, l)
+	if want := "[p] 12:00:01.500 m  a=1\n"; got != want {
+		t.Fatalf("got %q, want %q", got, want)
+	}
+}
+
+func TestPrettyFlattenColours(t *testing.T) {
+	opts := Options{Format: Pretty, Color: true}
+	for lvl, sgr := range map[string]string{
+		"TRACE": "2", "DEBUG": "2", "WARN": "33", "ERROR": "1;31", "FATAL": "1;97;41",
+	} {
+		got := writeOpts(t, opts, parse.Parse("p", `{"level":"`+lvl+`","msg":"hi"}`))
+		if !strings.HasSuffix(got, " "+esc(sgr, lvl)+" hi\n") {
+			t.Errorf("%s: got %q", lvl, got)
+		}
+	}
+	got := writeOpts(t, opts, parse.Parse("p", `{"level":"INFO","msg":"hi"}`))
+	if !strings.HasSuffix(got, " INFO hi\n") || strings.Contains(got, "\x1b[m") {
+		t.Errorf("INFO should be unstyled, got %q", got)
+	}
+	got = writeOpts(t, opts, parse.Parse("p", `{"level":"ERROR","msg":"boom","k":"v"}`))
+	if !strings.HasSuffix(got, " "+esc("1;31", "ERROR")+" boom  "+esc("36", "k=")+"v\n") {
+		t.Errorf("keys: got %q", got)
+	}
+}
+
+func TestPrettyNoFlattenKeepsRawJSON(t *testing.T) {
+	raw := `{"level":"ERROR","msg":"x","a":1}`
+	if got := writeOpts(t, Options{Format: Pretty, NoFlatten: true}, parse.Parse("p", raw)); got != "[p] "+raw+"\n" {
+		t.Fatalf("got %q", got)
+	}
+	got := writeOpts(t, Options{Format: Pretty, NoFlatten: true, Color: true}, parse.Parse("p", raw))
+	if !strings.HasSuffix(got, " "+esc("1;31", raw)+"\n") {
+		t.Fatalf("level style should still apply, got %q", got)
+	}
+}
+
+func TestPrettyFlattenOnlyAffectsPretty(t *testing.T) {
+	raw := `{"level":"INFO","msg":"x"}`
+	if got := write(t, Raw, false, parse.Parse("p", raw)); got != raw+"\n" {
+		t.Fatalf("raw changed: %q", got)
+	}
+	if got := write(t, JSON, false, parse.Parse("p", raw)); !strings.Contains(got, `"raw":"{\"level\":\"INFO\",\"msg\":\"x\"}"`) {
+		t.Fatalf("json changed: %q", got)
+	}
+}

@@ -2,11 +2,14 @@
 package render
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"hash/fnv"
 	"io"
 	"regexp"
+	"sort"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -118,10 +121,93 @@ func (r *Renderer) body(l parse.Line) string {
 		}
 		return l.Raw
 	}
-	if lv, ok := filter.LineLevel(l); ok {
-		return r.paint(r.levelStyle(lv), l.Raw)
+	lv, hasLevel := filter.LineLevel(l)
+	if r.o.NoFlatten {
+		if hasLevel {
+			return r.paint(r.levelStyle(lv), l.Raw)
+		}
+		return l.Raw
 	}
-	return l.Raw
+	return r.flatten(l, lv, hasLevel)
+}
+
+var levelNames = [...]string{
+	filter.Trace: "TRACE", filter.Debug: "DEBUG", filter.Info: "INFO",
+	filter.Warn: "WARN", filter.Error: "ERROR", filter.Fatal: "FATAL",
+}
+
+var msgKeys = []string{"msg", "message"}
+
+// flatten renders a JSON line as "LEVEL msg  key=val ...".
+func (r *Renderer) flatten(l parse.Line, lv filter.Level, hasLevel bool) string {
+	msgKey, msg := "", ""
+	for _, k := range msgKeys {
+		if s, ok := l.JSON[k].(string); ok {
+			msgKey, msg = k, s
+			break
+		}
+	}
+	shown := !l.Time.IsZero() // kubectl's timestamp already covers the JSON time fields
+	keys := make([]string, 0, len(l.JSON))
+	for k := range l.JSON {
+		switch {
+		case msgKey != "" && k == msgKey:
+			continue
+		// ponytail: all three level keys go when one is recognised; a level and a
+		// different severity on one line loses the severity. Rare; return the winning key if it matters.
+		case hasLevel && (k == "level" || k == "severity" || k == "lvl"):
+			continue
+		case shown && (k == "time" || k == "ts" || k == "timestamp"):
+			continue
+		}
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	var head []string
+	if hasLevel {
+		head = append(head, r.paint(r.levelStyle(lv), levelNames[lv]))
+	}
+	if msg != "" {
+		head = append(head, strings.NewReplacer("\n", `\n`, "\r", `\r`).Replace(msg))
+	}
+	out := strings.Join(head, " ")
+	if len(keys) > 0 {
+		pairs := make([]string, len(keys))
+		for i, k := range keys {
+			pairs[i] = r.paint(r.o.Theme.Keys, k+"=") + fmtValue(l.JSON[k])
+		}
+		if out != "" {
+			out += "  "
+		}
+		out += strings.Join(pairs, " ")
+	}
+	if out == "" {
+		return l.Raw
+	}
+	return out
+}
+
+// fmtValue prints one JSON value for a key=value pair.
+func fmtValue(v any) string {
+	switch x := v.(type) {
+	case string:
+		if x == "" || strings.ContainsAny(x, " \t\r\n\"") {
+			return strconv.Quote(x)
+		}
+		return x
+	case json.Number:
+		return x.String()
+	case bool:
+		return strconv.FormatBool(x)
+	case nil:
+		return "null"
+	}
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	enc.Encode(v) // values came out of json.Decode, so Encode cannot fail
+	return strings.TrimSuffix(buf.String(), "\n")
 }
 
 var omitted = regexp.MustCompile(`^\.\.\. \d+ (more|common frames omitted)`)

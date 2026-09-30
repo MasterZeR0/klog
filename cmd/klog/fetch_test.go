@@ -75,7 +75,7 @@ func TestFetchMergesByTimestamp(t *testing.T) {
 func TestFetchPrettyShowsLabelAndTime(t *testing.T) {
 	setup(t)
 	_, out, _ := klog(t, with("--level", "error")...)
-	if want := "[a-1] 12:00:03.000 " + aThree; strings.TrimSpace(out) != want {
+	if want := "[a-1] 12:00:03.000 ERROR a-three  orderId=12345678901234567890 requestId=r1"; strings.TrimSpace(out) != want {
 		t.Fatalf("got %q, want %q", out, want)
 	}
 }
