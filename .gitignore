@@ -1,0 +1,7 @@
+.mcp.json
+.agentsroom/handoff-transcript-*.txt
+.agentsroom/handoff-summary-*.md
+.agentsroom/fork-context-*.txt
+
+# graft's local graph cache — regenerable, not committed (run `graft build`).
+/graft/
