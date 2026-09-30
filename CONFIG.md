@@ -34,6 +34,7 @@ Set defaults that apply to all invocations:
 |----------|---------|---------|
 | `KLOG_KUBECTL` | Path to kubectl binary | `KLOG_KUBECTL=/opt/bin/kubectl` |
 | `NO_COLOR` | Disable ANSI colors | `NO_COLOR=1` |
+| `KLOG_PROFILES` | Path to the profiles file | `KLOG_PROFILES=~/work/profiles.json` |
 
 **Examples:**
 
@@ -276,13 +277,35 @@ Override with default:
 NO_COLOR=1 klog tail -n prod -d api
 ```
 
+### 5. Profiles (Saved Flag Sets)
+
+A profile is a named list of flags. Put them in `profiles.json` in the klog config directory (`~/.config/klog/profiles.json` on Linux, `~/Library/Application Support/klog/profiles.json` on macOS), or point `KLOG_PROFILES` at another file. Each profile is an array of argv strings; there is no shell parsing, so every flag and value is its own element:
+
+```json
+{
+  "checkout-prod": ["-n", "shop", "-d", "checkout", "--level", "WARN"],
+  "web-errors":    ["-n", "shop", "-l", "app=web", "--level", "ERROR", "--dedupe"]
+}
+```
+
+Start a command with `@name` to use one:
+
+```bash
+klog tail  @checkout-prod
+klog fetch @checkout-prod --since 2h --out errors.log
+```
+
+`@name` is replaced by the profile's flags before anything is parsed, and your own flags come after them. So a scalar flag you pass (`--level ERROR`) overrides the profile's value (the last one wins), and repeatable flags (`--field`) add to the profile's. Only a leading `@name` right after `tail` or `fetch` is expanded.
+
+An unknown profile, an unreadable file or invalid JSON is a usage error (exit 2); the message for an unknown profile lists the available names. A missing file simply means there are no profiles.
+
 ---
 
 ## Configuration Priority
 
 When a setting has multiple sources, priority is (highest to lowest):
 
-1. **Command-line flags** — `--context`, `--theme`, `--tz`, etc.
+1. **Command-line flags** — `--context`, `--theme`, `--tz`, etc. (these override flags that come from an `@profile`)
 2. **Environment variables** — `KLOG_KUBECTL`, `NO_COLOR`
 3. **Theme file** — `~/.config/klog/theme.json` or `~/Library/Application Support/klog/theme.json`
 4. **kubeconfig** — current context and namespace

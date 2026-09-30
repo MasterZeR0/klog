@@ -23,11 +23,13 @@ klog tail [flags]
 | `--since` | duration | 5m | Backlog to show before following (e.g. 10m, 1h) |
 | `--poll` | duration | 5s | How often to look for new and deleted pods |
 | `--wait` | bool | false | Keep polling when no pods match, instead of exiting immediately |
+| `--out` | string | stdout | Append to this file instead of stdout. Each line is written as it is rendered, so `tail -f` on the file works. Nothing is printed to stdout |
 
 **Example:**
 ```bash
 klog tail -n shop -d checkout --level WARN --since 30m
 klog tail -n shop -l app=web --poll 10s --wait
+klog tail -n shop -d checkout --level WARN --out warnings.log
 ```
 
 ---
@@ -58,6 +60,20 @@ klog fetch -n shop -d checkout --since 2h --level ERROR
 klog fetch -n shop -l app=web --since-time 2026-09-30T10:00:00Z --until 30m
 klog fetch -n prod -p '^api-' --since 1h --out errors.log --format json
 ```
+
+---
+
+## Profiles
+
+Both commands accept a leading `@name` that expands to a saved list of flags from `profiles.json` (see [CONFIG.md](CONFIG.md#5-profiles-saved-flag-sets)). Flags you add after it override the profile's scalar flags and add to repeatable ones such as `--field`.
+
+```bash
+klog tail  @checkout-prod
+klog tail  @checkout-prod --level ERROR --field requestId=abc-123
+klog fetch @checkout-prod --since 2h --out errors.log
+```
+
+An unknown profile or a malformed file is a usage error (exit 2) and lists the profiles that exist.
 
 ---
 
@@ -172,6 +188,39 @@ klog tail --grep 'timeout' --exclude 'connect_timeout'  # All filters must match
 | `--format` | `pretty` | (default) Pretty-printed with colors, JSON flattened to `LEVEL msg key=val ...`. Terminal colors via `NO_COLOR` env var and theme file. |
 | `--format` | `json` | One JSON object per line with keys: `source`, `time`, `raw`, `json` |
 | `--format` | `raw` | Raw log lines with no parsing or filtering applied |
+| `--format` | `template` | One line per entry rendered from `--template` (see below) |
+| `--template` | string | Go [text/template](https://pkg.go.dev/text/template) for `--format template`. Required with it, and an error without it |
+
+### Template Output
+
+`--format template --template '...'` renders one line per log entry and appends the newline itself. Available fields:
+
+| Field | Type | Meaning |
+|-------|------|---------|
+| `.Source` | string | `pod` or `pod/container` |
+| `.Time` | time.Time | kubectl timestamp in the `--tz` zone (zero if absent; use `{{.Time.Format "15:04:05"}}`) |
+| `.Raw` | string | The line without the kubectl timestamp |
+| `.Msg` | string | `msg` or `message` of a JSON line, else empty |
+| `.Level` | string | `TRACE` to `FATAL`, empty if unknown |
+| `.JSON` | map | Parsed JSON object, `nil` for plain text (`{{.JSON.requestId}}`) |
+| `.Repeats` | int | With `--dedupe`: identical lines folded into this one, else 0 |
+
+```bash
+klog fetch -n shop -d checkout --since 1h --format template \
+  --template '{{.Time.Format "15:04:05"}} {{.Source}} {{.Level}} {{.Msg}}'
+klog tail -n shop -d checkout --format template --template '{{.JSON.requestId}}' --field requestId~.
+```
+
+A template that does not parse is a usage error at startup. A field that is missing from a JSON line prints as `<no value>`.
+
+### Collapsing Repeats
+
+`--dedupe` (tail and fetch) collapses consecutive identical lines per pod, ignoring the kubectl timestamp. The first line is printed, followed by one `… repeated N more times` line when the run ends (a different line arrives, the stream ends or klog is interrupted). With `--format json` and `--format template` there is no summary line: the first line is printed once the run ends, with `"repeats": N` (`.Repeats`) when N is above 0, so in those formats a line can appear late on a quiet `tail`.
+
+```bash
+klog tail -n shop -d checkout --dedupe
+klog fetch -n shop -d checkout --since 1h --dedupe --format json
+```
 
 ### Pretty Output Options
 
@@ -247,6 +296,7 @@ Common SGR codes:
 |----------|-------------|
 | `KLOG_KUBECTL` | Path to kubectl binary. Defaults to `kubectl` on PATH. |
 | `NO_COLOR` | Set to any value to disable ANSI colors in pretty output. |
+| `KLOG_PROFILES` | Path to the profiles file. Defaults to `<user config dir>/klog/profiles.json`. |
 
 **Examples:**
 ```bash
@@ -274,6 +324,7 @@ NO_COLOR=1 klog tail --format pretty
 - **Durations**: Accept Go units up to hours (`48h`, not `2d`).
 - **Log levels**: Numeric log levels (e.g. pino `30`) are not supported.
 - **Stack traces**: Indented lines (stack frames) attach to the preceding log line.
+- **Dedupe**: Only back-to-back identical lines collapse; a repeating multi-line stack trace is not collapsed as a unit.
 
 ---
 
