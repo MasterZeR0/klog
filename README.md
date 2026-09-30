@@ -29,7 +29,7 @@ klog fetch -n shop -p '^web-' --since-time 2026-09-30T10:00:00Z --until 30m --fo
 
 Filters (all must match):
 
-- `--level WARN`: WARN and above. Reads `level`, `severity` or `lvl` from JSON lines. Lines without a recognised level are dropped.
+- `--level WARN`: WARN and above. Reads `level`, `severity` or `lvl` from JSON lines, as a name or a pino/bunyan number (10 TRACE ... 60 FATAL). Lines without a recognised level are dropped.
 - `--field key=value`, `key!=value`, `key~regex`: top-level JSON keys, repeatable. Non-JSON lines are dropped. A missing key matches `!=` only.
 - `--grep`, `--exclude`: regexes on the raw line. Indented stack-trace lines stay attached to the line before them.
 
@@ -55,8 +55,6 @@ Exit codes: 0 ok, 1 runtime failure, 2 usage error, 3 no pods matched.
 
 - History is whatever the kubelet still keeps. Logs of deleted pods are gone.
 - `tail` output is in arrival order, so ordering across pods is approximate. `fetch` sorts by kubectl timestamp.
-- Durations accept Go units up to hours (`48h`, not `2d`).
-- Numeric log levels (for example pino `30`) are not supported.
 
 ## Test
 

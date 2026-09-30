@@ -20,7 +20,7 @@ klog tail [flags]
 
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
-| `--since` | duration | 5m | Backlog to show before following (e.g. 10m, 1h) |
+| `--since` | duration | 5m | Backlog to show before following (e.g. 10m, 1h, 1d) |
 | `--poll` | duration | 5s | How often to look for new and deleted pods |
 | `--wait` | bool | false | Keep polling when no pods match, instead of exiting immediately |
 
@@ -46,7 +46,7 @@ klog fetch [flags]
 
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
-| `--since` | duration | (required) | How far back to fetch (largest unit: h). Example: 2h, 30m |
+| `--since` | duration | (required) | How far back to fetch Example: 2h, 30m, 2d |
 | `--since-time` | string | — | Absolute start time in RFC3339 format. Mutually exclusive with `--since` |
 | `--until` | string | — | End time: RFC3339 format or duration meaning "that long ago" |
 | `--previous` | bool | false | Include logs from the previous container instance (after restarts) |
@@ -101,7 +101,7 @@ All filters are optional and cumulative (all must match for a line to be kept).
 
 | Flag | Type | Description |
 |------|------|-------------|
-| `--level` | string | Minimum level: TRACE, DEBUG, INFO, WARN, ERROR or FATAL. Lines without a recognized level are dropped. Reads `level`, `severity` or `lvl` field from JSON lines. Non-JSON lines are dropped. |
+| `--level` | string | Minimum level: TRACE, DEBUG, INFO, WARN, ERROR or FATAL. Lines without a recognized level are dropped. Reads `level`, `severity` or `lvl` field from JSON lines, as a name or a number. Non-JSON lines are dropped. |
 
 **Recognized levels (in order):**
 - TRACE
@@ -110,6 +110,8 @@ All filters are optional and cumulative (all must match for a line to be kept).
 - WARN (shows WARN and above)
 - ERROR (shows ERROR and FATAL)
 - FATAL
+
+**Numeric levels** (pino/bunyan): 10=TRACE, 20=DEBUG, 30=INFO, 40=WARN, 50=ERROR, 60=FATAL. Values between steps round down (35 is INFO); 60 and above are FATAL; below 10 has no level.
 
 **Examples:**
 ```bash
@@ -271,8 +273,6 @@ NO_COLOR=1 klog tail --format pretty
 
 - **History**: Limited to what the kubelet keeps. Logs of deleted pods are gone.
 - **Ordering**: `tail` output is in arrival order, so ordering across pods is approximate. `fetch` sorts by kubectl timestamp.
-- **Durations**: Accept Go units up to hours (`48h`, not `2d`).
-- **Log levels**: Numeric log levels (e.g. pino `30`) are not supported.
 - **Stack traces**: Indented lines (stack frames) attach to the preceding log line.
 
 ---
@@ -293,8 +293,9 @@ ms (millisecond)
 s  (second)
 m  (minute)
 h  (hour)
+d  (day, exactly 24h)
 
-Examples: 30m, 2h, 10s, 5m30s
+Examples: 30m, 2h, 10s, 5m30s, 2d, 1d12h
 ```
 
 **Examples:**
