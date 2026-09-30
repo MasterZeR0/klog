@@ -235,14 +235,15 @@ func parseWhen(s string, now time.Time) (time.Time, error) {
 	return time.Time{}, fmt.Errorf("invalid time %q: want RFC3339 (2026-09-30T12:00:00Z) or a duration such as 30m or 2d", s)
 }
 
-// useColor is true only for a terminal stdout with NO_COLOR unset.
+// useColor is true only for a terminal stdout with NO_COLOR unset, and on
+// Windows only when the console accepts ANSI escapes.
 func useColor(w io.Writer) bool {
 	f, ok := w.(*os.File)
 	if !ok || os.Getenv("NO_COLOR") != "" {
 		return false
 	}
 	st, err := f.Stat()
-	return err == nil && st.Mode()&os.ModeCharDevice != 0
+	return err == nil && st.Mode()&os.ModeCharDevice != 0 && enableVT(f)
 }
 
 type syncWriter struct {
