@@ -106,3 +106,40 @@ func TestDefaultThemePathBlockedByAFileFallsBackToDefaults(t *testing.T) {
 		t.Fatalf("code %d, stderr %q, stdout\n%s", code, errs, out)
 	}
 }
+
+func TestTailNoFlattenKeepsRawJSON(t *testing.T) {
+	f := setup(t)
+	f.Hang("a-1")
+	f.Hang("b-1")
+	out, _, _ := startTail(t, "-n", "shop", "-l", "app=web", "--poll", "50ms", "--no-flatten")
+	waitFor(t, "raw JSON line", func() bool { return strings.Contains(out.String(), aOne) })
+}
+
+func TestTailFlattensByDefault(t *testing.T) {
+	f := setup(t)
+	f.Hang("a-1")
+	f.Hang("b-1")
+	out, _, _ := startTail(t, "-n", "shop", "-l", "app=web", "--poll", "50ms")
+	waitFor(t, "flattened line", func() bool { return strings.Contains(out.String(), "INFO a-one") })
+	if strings.Contains(out.String(), aOne) {
+		t.Fatalf("raw JSON leaked into flattened output:\n%s", out.String())
+	}
+}
+
+func TestValidDefaultThemeFileIsUsed(t *testing.T) {
+	setup(t)
+	cfg, err := os.UserConfigDir() // HOME was redirected by setup
+	if err != nil {
+		t.Skip("no user config dir")
+	}
+	if err := os.MkdirAll(filepath.Join(cfg, "klog"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(cfg, "klog", "theme.json"), []byte(`{"levels":{"warn":"34"}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	code, out, errs := klog(t, with()...)
+	if code != 0 || !strings.Contains(out, "WARN b-two  requestId=r2") {
+		t.Fatalf("code %d, stderr %q, stdout\n%s", code, errs, out)
+	}
+}
