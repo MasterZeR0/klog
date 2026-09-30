@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -176,15 +177,48 @@ func kubectlFailure(stderr io.Writer, err error) int {
 	return 1
 }
 
+var dayUnit = regexp.MustCompile(`(\d*\.?\d+)d`)
+
+// parseDuration is time.ParseDuration plus a day unit: a day is 24h, so 2d is
+// 48h and 1d12h is 36h. It does not know about DST or calendars.
+func parseDuration(s string) (time.Duration, error) {
+	conv := dayUnit.ReplaceAllStringFunc(s, func(m string) string {
+		n, _ := strconv.ParseFloat(m[:len(m)-1], 64)
+		return strconv.FormatFloat(n*24, 'f', -1, 64) + "h"
+	})
+	d, err := time.ParseDuration(conv)
+	if err != nil {
+		return 0, fmt.Errorf("invalid duration %q: want a number and unit such as 30m, 2h, 2d or 1d12h", s)
+	}
+	return d, nil
+}
+
+// durationValue is a flag.Value for durations that accept the d unit.
+type durationValue time.Duration
+
+func (d *durationValue) String() string { return time.Duration(*d).String() }
+func (d *durationValue) Set(v string) error {
+	x, err := parseDuration(v)
+	*d = durationValue(x)
+	return err
+}
+
+// durationVar is fs.Duration with parseDuration.
+func durationVar(fs *flag.FlagSet, name string, def time.Duration, usage string) *time.Duration {
+	d := def
+	fs.Var((*durationValue)(&d), name, usage)
+	return &d
+}
+
 // parseWhen reads an RFC3339 time, or a duration meaning "that long ago".
 func parseWhen(s string, now time.Time) (time.Time, error) {
 	if t, err := time.Parse(time.RFC3339, s); err == nil {
 		return t, nil
 	}
-	if d, err := time.ParseDuration(s); err == nil && d >= 0 {
+	if d, err := parseDuration(s); err == nil && d >= 0 {
 		return now.Add(-d), nil
 	}
-	return time.Time{}, fmt.Errorf("invalid time %q: want RFC3339 (2026-09-30T12:00:00Z) or a duration such as 30m", s)
+	return time.Time{}, fmt.Errorf("invalid time %q: want RFC3339 (2026-09-30T12:00:00Z) or a duration such as 30m or 2d", s)
 }
 
 // useColor is true only for a terminal stdout with NO_COLOR unset.

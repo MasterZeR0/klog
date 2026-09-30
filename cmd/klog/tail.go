@@ -25,8 +25,8 @@ type tailStream struct {
 func runTail(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	fs := newFlagSet("tail", stderr)
 	cf := addCommon(fs)
-	since := fs.Duration("since", 5*time.Minute, "backlog to show before following, for example 10m")
-	poll := fs.Duration("poll", 5*time.Second, "how often to look for new and deleted pods")
+	since := durationVar(fs, "since", 5*time.Minute, "backlog to show before following, for example 10m or 1d")
+	poll := durationVar(fs, "poll", 5*time.Second, "how often to look for new and deleted pods")
 	wait := fs.Bool("wait", false, "keep polling when no pods match instead of exiting")
 	if code, done := parseFlags(fs, args, stderr); done {
 		return code

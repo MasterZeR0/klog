@@ -23,7 +23,7 @@ import (
 func runFetch(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	fs := newFlagSet("fetch", stderr)
 	cf := addCommon(fs)
-	since := fs.Duration("since", 0, "how far back to fetch, for example 2h (largest unit: h)")
+	since := durationVar(fs, "since", 0, "how far back to fetch, for example 2h or 2d")
 	sinceTime := fs.String("since-time", "", "absolute start time, RFC3339")
 	until := fs.String("until", "", "end time: RFC3339, or a duration meaning that long ago")
 	previous := fs.Bool("previous", false, "logs of the previous container instance")

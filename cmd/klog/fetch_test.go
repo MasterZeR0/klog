@@ -163,6 +163,8 @@ func TestFetchUsageErrorsNeverCallKubectl(t *testing.T) {
 		"two targets":        {"fetch", "-l", "a=b", "-d", "web", "--since", "1h"},
 		"no since":           {"fetch", "-l", "a=b"},
 		"both since":         {"fetch", "-l", "a=b", "--since", "1h", "--since-time", "2026-01-01T00:00:00Z"},
+		"bad since unit":     {"fetch", "-l", "a=b", "--since", "2x"},
+		"bad until unit":     with("--until", "2x"),
 		"bad since-time":     {"fetch", "-l", "a=b", "--since-time", "yesterday"},
 		"until before since": with("--until", "2026-01-01T00:00:00Z"),
 		"stray argument":     with("oops"),
