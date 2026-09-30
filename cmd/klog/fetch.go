@@ -12,12 +12,12 @@ import (
 	"sync/atomic"
 	"time"
 
-	"klog/internal/filter"
 	"klog/internal/merge"
 	"klog/internal/parse"
 	"klog/internal/render"
 	"klog/internal/resolve"
 	"klog/internal/run"
+	"klog/internal/stats"
 )
 
 func runFetch(ctx context.Context, args []string, stdout, stderr io.Writer) int {
@@ -28,10 +28,16 @@ func runFetch(ctx context.Context, args []string, stdout, stderr io.Writer) int 
 	until := fs.String("until", "", "end time: RFC3339, or a duration meaning that long ago")
 	previous := fs.Bool("previous", false, "logs of the previous container instance")
 	outPath := fs.String("out", "", "write to this file (atomically) instead of stdout")
+	incf := addIncident(fs)
+	showStats := fs.Bool("stats", false, "print a per-pod x level count table instead of the lines")
 	if code, done := parseFlags(fs, args, stderr); done {
 		return code
 	}
 	c, err := cf.build()
+	if err != nil {
+		return usageError(stderr, err)
+	}
+	inc, err := incf.build(c)
 	if err != nil {
 		return usageError(stderr, err)
 	}
@@ -97,6 +103,11 @@ func runFetch(ctx context.Context, args []string, stdout, stderr io.Writer) int 
 
 	var wg sync.WaitGroup
 	var failed atomic.Int32
+	var barrier *sync.WaitGroup // fetch --follow-id: every stream is read before any line is emitted
+	if inc.ids != nil {
+		barrier = &sync.WaitGroup{}
+		barrier.Add(len(streams))
+	}
 	srcs := make([]<-chan parse.Line, len(streams))
 	for i, s := range streams {
 		ch := make(chan parse.Line, 64)
@@ -105,7 +116,13 @@ func runFetch(ctx context.Context, args []string, stdout, stderr io.Writer) int 
 		go func() {
 			defer wg.Done()
 			defer close(ch)
-			f := filter.New(c.filter)
+			stg := inc.newStage(c.filter, barrier)
+			send := func(l parse.Line) {
+				select {
+				case ch <- l:
+				case <-ctx.Done():
+				}
+			}
 			first := true
 			err := runner.Run(ctx, s, func(raw run.Raw) {
 				l := parse.Parse(raw.Label, raw.Text)
@@ -119,14 +136,13 @@ func runFetch(ctx context.Context, args []string, stdout, stderr io.Writer) int 
 				if !untilT.IsZero() && !l.Time.IsZero() && l.Time.After(untilT) {
 					return
 				}
-				if !f.Keep(l) {
-					return
-				}
-				select {
-				case ch <- l:
-				case <-ctx.Done():
+				for _, o := range stg.Feed(l) {
+					send(o)
 				}
 			})
+			for _, o := range stg.Flush() {
+				send(o)
+			}
 			if err != nil {
 				failed.Add(1)
 			}
@@ -134,14 +150,24 @@ func runFetch(ctx context.Context, args []string, stdout, stderr io.Writer) int 
 	}
 
 	var writeErr error
+	counts := stats.New()
 	for l := range merge.Merge(ctx, srcs) {
-		if writeErr = renderer.Write(l); writeErr != nil {
+		if *showStats {
+			counts.Add(l)
+		} else if writeErr = renderer.Write(l); writeErr != nil {
 			cancel() // stops the streams and the merger; every goroutine selects on ctx.Done()
 			break
 		}
 	}
 	cancel()
 	wg.Wait()
+	if *showStats && writeErr == nil && parent.Err() == nil {
+		if view.Format == render.JSON {
+			writeErr = counts.WriteJSON(w)
+		} else {
+			writeErr = counts.WriteText(w)
+		}
+	}
 
 	switch {
 	case writeErr != nil:

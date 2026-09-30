@@ -8,7 +8,6 @@ import (
 	"sync"
 	"time"
 
-	"klog/internal/filter"
 	"klog/internal/parse"
 	"klog/internal/render"
 	"klog/internal/resolve"
@@ -27,11 +26,16 @@ func runTail(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	cf := addCommon(fs)
 	since := durationVar(fs, "since", 5*time.Minute, "backlog to show before following, for example 10m or 1d")
 	poll := durationVar(fs, "poll", 5*time.Second, "how often to look for new and deleted pods")
+	incf := addIncident(fs)
 	wait := fs.Bool("wait", false, "keep polling when no pods match instead of exiting")
 	if code, done := parseFlags(fs, args, stderr); done {
 		return code
 	}
 	c, err := cf.build()
+	if err != nil {
+		return usageError(stderr, err)
+	}
+	inc, err := incf.build(c)
 	if err != nil {
 		return usageError(stderr, err)
 	}
@@ -81,15 +85,13 @@ func runTail(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			f := filter.New(c.filter)
+			stg := inc.newStage(c.filter, nil)
 			runner.Run(sctx, s, func(raw run.Raw) {
-				l := parse.Parse(raw.Label, raw.Text)
-				if !f.Keep(l) {
-					return
-				}
-				select {
-				case out <- l:
-				case <-sctx.Done():
+				for _, l := range stg.Feed(parse.Parse(raw.Label, raw.Text)) {
+					select {
+					case out <- l:
+					case <-sctx.Done():
+					}
 				}
 			})
 			select {

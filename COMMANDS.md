@@ -51,6 +51,7 @@ klog fetch [flags]
 | `--until` | string | — | End time: RFC3339 format or duration meaning "that long ago" |
 | `--previous` | bool | false | Include logs from the previous container instance (after restarts) |
 | `--out` | string | stdout | Write to this file atomically instead of stdout |
+| `--stats` | bool | false | Print a pod x level count table instead of the lines (see [Incident debugging](#incident-debugging)) |
 
 **Example:**
 ```bash
@@ -178,6 +179,64 @@ klog tail --grep 'timeout' --exclude 'connect_timeout'  # All filters must match
 
 ---
 
+## Incident debugging
+
+Three flags for working out what happened around an error. `-A`, `-B`, `-C` and `--follow-id` work on both `tail` and `fetch`; `--stats` is `fetch` only (a tail never ends, so it has nothing to total, and `klog tail --stats` is a usage error).
+
+### Context lines: `-A`, `-B`, `-C`
+
+| Flag | Description |
+|------|-------------|
+| `-A N`, `--after N` | Also print the N lines after each match |
+| `-B N`, `--before N` | Also print the N lines before each match |
+| `-C N` | Both; the larger of `-C` and `-A`/`-B` wins |
+
+A match is a line that passes every filter; `-A`/`-B`/`-C` need `--grep` and are a usage error without it. Context lines are printed even though they do not match, so `--level`, `--field` and `--exclude` do not apply to them.
+
+- Context is per pod and container: lines of one pod are never used as context for a match in another.
+- A line is printed once even when matches overlap. Stack-trace lines stay attached to their match and are not counted as context.
+- There is no `--` separator between groups: in a merged multi-pod stream a separator has no meaningful position. Use `--format json` or the pod label to tell groups apart.
+- With `tail`, after-context continues across the following lines as they arrive.
+
+```bash
+klog fetch -n shop -d checkout --since 1h --grep 'payment declined' -C 5
+klog tail  -n shop -d checkout --grep OOMKilled -B 10
+```
+
+### Trace follow: `--follow-id FIELD`
+
+Lines that pass all the other filters are seeds. Their value of the JSON field `FIELD` is remembered, and every line from any selected pod whose `FIELD` has a remembered value is printed too, even if it fails the other filters. Use it to see a whole request after finding its error.
+
+- `FIELD` is a top-level JSON key (no dotted paths). Values that are strings, numbers or booleans count as IDs; lines without the field, and non-JSON lines, are never followed.
+- `fetch` reads every pod first and then prints, in timestamp order, all lines that share a seed's ID. This includes lines logged before the seed. The matching lines are held in memory, so a very large fetch needs a narrower `--since`.
+- `tail` is forward-only: the set grows as seeds arrive, so only lines logged after the seed is seen are followed. Earlier lines of the same request have already gone by and cannot be recovered; use `fetch` for that. Across pods, arrival order decides which line is seen first.
+- A followed line counts as a match for `-A`/`-B`/`-C`.
+
+```bash
+klog fetch -n shop -d checkout --since 1h --level ERROR --follow-id traceId
+klog tail  -n shop -l app=web --field 'status=500' --follow-id requestId
+```
+
+### Level counts: `fetch --stats`
+
+Prints counts of the lines that remain after the filters (including `-A`/`-B`/`-C` and `--follow-id` lines) instead of the lines themselves: one row per pod (sorted), columns `TRACE DEBUG INFO WARN ERROR FATAL ?`, and `TOTAL` row and column. `?` counts lines with no recognised level, including non-JSON lines.
+
+```
+$ klog fetch -n shop -d checkout --since 1h --stats
+SOURCE      TRACE  DEBUG  INFO  WARN  ERROR  FATAL  ?   TOTAL
+checkout-1  0      0      812   14    3      0      9   838
+checkout-2  0      0      790   2     0      0      4   796
+TOTAL       0      0      1602  16    3      0      13  1634
+```
+
+With `--format json` it prints one object per pod, sorted by pod, with every level key present (no TOTAL row):
+
+```json
+{"source":"checkout-1","counts":{"?":9,"DEBUG":0,"ERROR":3,"FATAL":0,"INFO":812,"TRACE":0,"WARN":14},"total":838}
+```
+
+---
+
 ## Output Formats
 
 | Flag | Value | Description |
@@ -286,6 +345,7 @@ NO_COLOR=1 klog tail --format pretty
 - **Ordering**: `tail` output is in arrival order, so ordering across pods is approximate. `fetch` sorts by kubectl timestamp.
 - **Field paths**: Dotted paths walk nested objects only, not arrays.
 - **Stack traces**: Indented lines (stack frames) attach to the preceding log line.
+- **Trace follow**: `tail --follow-id` only follows lines logged after the seed; `fetch --follow-id` holds the matching lines in memory.
 
 ---
 
@@ -344,6 +404,21 @@ klog tail -n shop -l app=checkout --field 'requestId=abc-123'
 ### Find slow requests (>1000ms latency)
 ```bash
 klog tail -d api --field 'latency~[0-9]{4,}' --format json
+```
+
+### Show the whole request behind an error
+```bash
+klog fetch -n prod -d api --since 1h --level ERROR --follow-id traceId
+```
+
+### See what happened around a message
+```bash
+klog fetch -n prod -d api --since 30m --grep 'connection reset' -C 3
+```
+
+### Which pods are erroring?
+```bash
+klog fetch -n prod -d api --since 1h --stats
 ```
 
 ### Get logs from previous container instance
