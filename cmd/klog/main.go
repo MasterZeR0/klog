@@ -15,6 +15,9 @@ Usage:
   klog tail  [flags]   follow logs live
   klog fetch [flags]   fetch a time range, sorted by timestamp
 
+Either command accepts a leading @name to load saved flags from
+<user config dir>/klog/profiles.json; flags after it override the profile.
+
 Run "klog tail -h" or "klog fetch -h" for the flags.
 `
 
@@ -31,6 +34,13 @@ func execute(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
 		fmt.Fprint(stderr, usage)
 		return 2
+	}
+	if args[0] == "tail" || args[0] == "fetch" {
+		rest, err := expandProfile(args[1:])
+		if err != nil {
+			return usageError(stderr, err)
+		}
+		args = append([]string{args[0]}, rest...)
 	}
 	switch args[0] {
 	case "tail":
