@@ -15,7 +15,7 @@ var ts = time.Date(2026, 9, 30, 12, 0, 1, 500_000_000, time.UTC)
 func write(t *testing.T, f Format, color bool, l parse.Line) string {
 	t.Helper()
 	var buf bytes.Buffer
-	if err := New(&buf, f, color).Write(l); err != nil {
+	if err := New(&buf, f, color, time.UTC).Write(l); err != nil {
 		t.Fatal(err)
 	}
 	return buf.String()

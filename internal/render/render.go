@@ -36,12 +36,16 @@ type Renderer struct {
 	f     Format
 	color bool
 	enc   *json.Encoder
+	tz    *time.Location
 }
 
-func New(w io.Writer, f Format, color bool) *Renderer {
+func New(w io.Writer, f Format, color bool, tz *time.Location) *Renderer {
 	enc := json.NewEncoder(w)
 	enc.SetEscapeHTML(false)
-	return &Renderer{w: w, f: f, color: color, enc: enc}
+	if tz == nil {
+		tz = time.UTC
+	}
+	return &Renderer{w: w, f: f, color: color, enc: enc, tz: tz}
 }
 
 type record struct {
@@ -73,7 +77,7 @@ func (r *Renderer) Write(l parse.Line) error {
 	}
 	ts := ""
 	if !l.Time.IsZero() {
-		ts = l.Time.UTC().Format("15:04:05.000") + " "
+		ts = l.Time.In(r.tz).Format("15:04:05.000") + " "
 	}
 	_, err := fmt.Fprintf(r.w, "%s %s%s\n", prefix, ts, l.Raw)
 	return err

@@ -79,7 +79,7 @@ func runFetch(ctx context.Context, args []string, stdout, stderr io.Writer) int 
 		fmt.Fprintf(stderr, "klog: --out: %v\n", err)
 		return 1
 	}
-	renderer := render.New(w, c.format, *outPath == "" && useColor(stdout))
+	renderer := render.New(w, c.format, *outPath == "" && useColor(stdout), c.tz)
 
 	opts := run.Opts{Namespace: c.target.Namespace, Previous: *previous}
 	if *since > 0 {

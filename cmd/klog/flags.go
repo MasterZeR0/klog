@@ -26,7 +26,7 @@ func (m *multiFlag) Set(v string) error { *m = append(*m, v); return nil }
 // commonFlags are the raw flag values shared by tail and fetch.
 type commonFlags struct {
 	context, ns, selector, deployment, pod, container string
-	level, grep, exclude, format                      string
+	level, grep, exclude, format, tz                  string
 	fields                                            multiFlag
 }
 
@@ -43,6 +43,7 @@ func addCommon(fs *flag.FlagSet) *commonFlags {
 	fs.StringVar(&c.grep, "grep", "", "keep lines matching this regex")
 	fs.StringVar(&c.exclude, "exclude", "", "drop lines matching this regex")
 	fs.StringVar(&c.format, "format", "pretty", "output format: pretty, json or raw")
+	fs.StringVar(&c.tz, "tz", "", "timezone for timestamps (e.g. America/New_York or Local; default: UTC)")
 	return c
 }
 
@@ -52,6 +53,7 @@ type common struct {
 	target  resolve.Target
 	filter  filter.Config
 	format  render.Format
+	tz      *time.Location
 }
 
 func (c *commonFlags) build() (common, error) {
@@ -86,7 +88,18 @@ func (c *commonFlags) build() (common, error) {
 		return out, err
 	}
 	out.format, err = render.ParseFormat(c.format)
-	return out, err
+	if err != nil {
+		return out, err
+	}
+	if c.tz == "" {
+		out.tz = time.UTC
+	} else {
+		out.tz, err = time.LoadLocation(c.tz)
+		if err != nil {
+			return out, fmt.Errorf("invalid --tz %q: %w", c.tz, err)
+		}
+	}
+	return out, nil
 }
 
 func compileOpt(name, expr string) (*regexp.Regexp, error) {
