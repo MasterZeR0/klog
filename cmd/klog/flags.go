@@ -45,7 +45,7 @@ func addCommon(fs *flag.FlagSet) *commonFlags {
 	fs.StringVar(&c.pod, "p", "", "target: pod name regex")
 	fs.StringVar(&c.container, "c", "", "container name regex (default: all containers)")
 	fs.StringVar(&c.level, "level", "", "minimum level: TRACE, DEBUG, INFO, WARN, ERROR or FATAL")
-	fs.Var(&c.fields, "field", "JSON field filter key=value, key!=value or key~regex (repeatable)")
+	fs.Var(&c.fields, "field", "JSON field filter key=value, key!=value, key~regex or key>number (also >=, <, <=); key may be a dotted path like req.user.id (repeatable)")
 	fs.StringVar(&c.grep, "grep", "", "keep lines matching this regex")
 	fs.StringVar(&c.exclude, "exclude", "", "drop lines matching this regex")
 	fs.StringVar(&c.format, "format", "pretty", "output format: pretty, json or raw")

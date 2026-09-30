@@ -75,6 +75,15 @@ func TestParseField(t *testing.T) {
 		{"expr=a=b", "expr", OpEq, "a=b"},
 		{"re=a~b", "re", OpEq, "a~b"},
 		{"k=", "k", OpEq, ""},
+		{"latency>500", "latency", OpGt, "500"},
+		{"status>=500", "status", OpGe, "500"},
+		{"latency<1.5", "latency", OpLt, "1.5"},
+		{"n<=-3", "n", OpLe, "-3"},
+		{"req.user.id=42", "req.user.id", OpEq, "42"},
+		{"a=b>c", "a", OpEq, "b>c"},   // the first operator char decides
+		{"a~x>=1", "a", OpRe, "x>=1"}, // so a regex may contain > and <
+		{"a!=5", "a", OpNe, "5"},
+		{"a=>5", "a", OpEq, ">5"},
 	}
 	for _, tc := range good {
 		f, err := ParseField(tc.in)
@@ -82,7 +91,7 @@ func TestParseField(t *testing.T) {
 			t.Errorf("ParseField(%q) = %+v, %v", tc.in, f, err)
 		}
 	}
-	for _, bad := range []string{"novalue", "=v", "!=v", "a~(", ""} {
+	for _, bad := range []string{"novalue", "=v", "!=v", "a~(", "", ">5", "a>", "a>x", "a>=", "a<=x", "a>NaN", "a<inf", "a>=b=1"} {
 		if _, err := ParseField(bad); err == nil {
 			t.Errorf("ParseField(%q) should fail", bad)
 		}
@@ -106,6 +115,69 @@ func TestFieldMatchMissingKey(t *testing.T) {
 	}
 	if must("missing~x").Match(obj) {
 		t.Error("~ on a missing key should not match")
+	}
+}
+
+func TestFieldMatchNested(t *testing.T) {
+	obj := jl(`{"req":{"user":{"id":42,"name":"ann"},"list":[1]},"a.b":"top","a":{"b":"nested","c.d":"deep"},"n":null}`).JSON
+	tests := []struct {
+		expr string
+		want bool
+	}{
+		{"req.user.id=42", true},
+		{"req.user.id=43", false},
+		{"req.user.name~^an", true},
+		{"req.user.id>40", true},
+		{"req.user.id!=42", false},
+		{"req.user.missing=1", false},
+		{"req.user.missing!=1", true}, // missing path behaves like a missing key
+		{"req.user.missing~x", false},
+		{"req.nope.id!=42", true},
+		{"req.user.id.deeper=1", false}, // walking through a non-object is a miss
+		{"req.user.id.deeper!=1", true},
+		{"req.user=x", false}, // an object is not an intermediate hit
+		{"a.b=top", true},     // a literal dotted top-level key wins
+		{"a.b!=nested", true},
+		{"a.c.d=deep", true},    // and so does one at a nested level
+		{"req.list.0=1", false}, // arrays are not walked
+		{"n.x=1", false},
+	}
+	for _, tc := range tests {
+		f, err := ParseField(tc.expr)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := f.Match(obj); got != tc.want {
+			t.Errorf("%s = %v, want %v", tc.expr, got, tc.want)
+		}
+	}
+}
+
+func TestFieldMatchNumeric(t *testing.T) {
+	obj := jl(`{"n":500,"f":1.5,"neg":-2,"big":12345678901234567890,"s":"500","b":true,"z":null,"o":{"a":1}}`).JSON
+	tests := []struct {
+		expr string
+		want bool
+	}{
+		{"n>499", true}, {"n>500", false}, {"n>=500", true}, {"n<501", true}, {"n<500", false}, {"n<=500", true},
+		{"f>1", true}, {"f<2", true}, {"f>=1.5", true}, {"n>4.99e2", true},
+		{"neg<0", true}, {"neg>-3", true},
+		{"big>1e19", true}, {"big<1e20", true},
+		{"s>1", false}, // strings are not numeric
+		{"b>0", false},
+		{"z<1", false},
+		{"o>0", false},
+		{"missing>0", false},
+		{"missing<=0", false},
+	}
+	for _, tc := range tests {
+		f, err := ParseField(tc.expr)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := f.Match(obj); got != tc.want {
+			t.Errorf("%s = %v, want %v", tc.expr, got, tc.want)
+		}
 	}
 }
 
