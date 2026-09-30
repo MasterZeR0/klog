@@ -32,8 +32,8 @@ type commonFlags struct {
 	context, ns, selector, deployment, pod, container string
 	level, grep, exclude, format, tz                  string
 	fields                                            multiFlag
-	theme                                             string
-	noFlatten                                         bool
+	theme, template                                   string
+	noFlatten, dedupe                                 bool
 }
 
 func addCommon(fs *flag.FlagSet) *commonFlags {
@@ -48,9 +48,11 @@ func addCommon(fs *flag.FlagSet) *commonFlags {
 	fs.Var(&c.fields, "field", "JSON field filter key=value, key!=value, key~regex or key>number (also >=, <, <=); key may be a dotted path like req.user.id (repeatable)")
 	fs.StringVar(&c.grep, "grep", "", "keep lines matching this regex")
 	fs.StringVar(&c.exclude, "exclude", "", "drop lines matching this regex")
-	fs.StringVar(&c.format, "format", "pretty", "output format: pretty, json or raw")
+	fs.StringVar(&c.format, "format", "pretty", "output format: pretty, json, raw or template")
+	fs.StringVar(&c.template, "template", "", "Go text/template for --format template; fields: .Source .Time .Raw .Msg .Level .JSON")
 	fs.StringVar(&c.tz, "tz", "", "timezone for timestamps (e.g. America/New_York or Local; default: UTC)")
 	fs.BoolVar(&c.noFlatten, "no-flatten", false, "pretty format: print JSON lines as raw JSON instead of LEVEL msg key=val")
+	fs.BoolVar(&c.dedupe, "dedupe", false, "collapse consecutive identical lines per pod into the first plus a repeat count")
 	fs.StringVar(&c.theme, "theme", "", "theme file (default: <user config dir>/klog/theme.json)")
 	return c
 }
@@ -61,6 +63,7 @@ type common struct {
 	target  resolve.Target
 	filter  filter.Config
 	view    render.Options // Format, TZ, NoFlatten, Theme; callers set Color
+	dedupe  bool
 }
 
 func (c *commonFlags) build() (common, error) {
@@ -98,6 +101,9 @@ func (c *commonFlags) build() (common, error) {
 	if err != nil {
 		return out, err
 	}
+	if err := out.view.SetTemplate(c.template); err != nil {
+		return out, err
+	}
 	if c.tz == "" {
 		out.view.TZ = time.UTC
 	} else {
@@ -107,6 +113,7 @@ func (c *commonFlags) build() (common, error) {
 		}
 	}
 	out.view.NoFlatten = c.noFlatten
+	out.dedupe = c.dedupe
 	if out.view.Theme, err = loadTheme(c.theme); err != nil {
 		return out, err
 	}

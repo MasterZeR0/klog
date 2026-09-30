@@ -41,7 +41,16 @@ Incident kit (details in [COMMANDS.md](COMMANDS.md#incident-debugging)):
 - `--follow-id FIELD`: also show every line, from any pod, whose `FIELD` value matches a line that passed the filters.
 - `fetch --stats`: print a pod x level count table instead of the lines.
 
-`--format pretty` (default), `json` (one object per line: `source`, `time`, `raw`, `json`) or `raw`.
+`--format pretty` (default), `json` (one object per line: `source`, `time`, `raw`, `json`), `raw` or `template`.
+
+For piping: `--format template --template '{{.Source}} {{.Level}} {{.Msg}}'` renders one line per entry from `.Source`, `.Time`, `.Raw`, `.Msg`, `.Level` and `.JSON`; `--out FILE` writes `tail` output to a file (appending) as well as `fetch` output; `--dedupe` collapses consecutive identical lines per pod into the first line plus `… repeated N more times`.
+
+Save flags you use often as a profile in `<user config dir>/klog/profiles.json` (`{"checkout-prod": ["-n","shop","-d","checkout","--level","WARN"]}`) and start a command with its name. Flags after it override the profile's:
+
+```
+klog tail @checkout-prod
+klog fetch @checkout-prod --since 2h --level ERROR
+```
 
 Pretty output colours levels and stack traces on a terminal (`NO_COLOR` turns it off) and prints JSON lines as `LEVEL msg  key=val ...`; keep the raw JSON with `--no-flatten`.
 

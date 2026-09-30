@@ -17,7 +17,7 @@ func sample() *Table {
 	add(t, "a-1", `{"severity":"warning"}`)
 	add(t, "a-1", `{"level":"info"}`)
 	add(t, "a-1", `plain text`)
-	add(t, "a-1", `{"level":30}`) // numeric: unrecognised
+	add(t, "a-1", `{"level":5}`) // numeric below 10: unrecognised
 	return t
 }
 

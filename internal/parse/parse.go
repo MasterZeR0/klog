@@ -14,6 +14,8 @@ type Line struct {
 	Time  time.Time      // kubectl timestamp; zero when absent
 	Raw   string         // the line without the kubectl timestamp prefix
 	JSON  map[string]any // non-nil only when Raw is exactly one JSON object
+
+	Repeats int // identical lines --dedupe folded into this one; 0 otherwise
 }
 
 // SplitTimestamp splits the kubectl --timestamps prefix off line.

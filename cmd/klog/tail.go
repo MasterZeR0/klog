@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"sync"
 	"time"
 
@@ -28,6 +29,7 @@ func runTail(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	poll := durationVar(fs, "poll", 5*time.Second, "how often to look for new and deleted pods")
 	incf := addIncident(fs)
 	wait := fs.Bool("wait", false, "keep polling when no pods match instead of exiting")
+	outPath := fs.String("out", "", "append to this file (flushed per line) instead of stdout")
 	if code, done := parseFlags(fs, args, stderr); done {
 		return code
 	}
@@ -69,9 +71,20 @@ func runTail(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		Opts:   run.Opts{Namespace: c.target.Namespace, Follow: true, Since: *since},
 		Notify: func(m string) { fmt.Fprintln(stderr, m) },
 	}
+	w := stdout
+	if *outPath != "" {
+		// os.File is unbuffered, so every rendered line reaches the file at once.
+		f, err := os.OpenFile(*outPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+		if err != nil {
+			fmt.Fprintf(stderr, "klog: --out: %v\n", err)
+			return 1
+		}
+		defer f.Close()
+		w = f
+	}
 	view := c.view
-	view.Color = useColor(stdout)
-	renderer := render.New(stdout, view)
+	view.Color = *outPath == "" && useColor(stdout)
+	renderer := render.New(w, view)
 
 	out := make(chan parse.Line, 256) // bounded: a slow terminal slows the runners
 	ended := make(chan *tailStream)
@@ -86,14 +99,23 @@ func runTail(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		go func() {
 			defer wg.Done()
 			stg := inc.newStage(c.filter, nil)
-			runner.Run(sctx, s, func(raw run.Raw) {
-				for _, l := range stg.Feed(parse.Parse(raw.Label, raw.Text)) {
-					select {
-					case out <- l:
-					case <-sctx.Done():
-					}
+			push, flush := c.stage(func(l parse.Line) {
+				select {
+				case out <- l: // room in the queue: never drop, even while stopping
+					return
+				default:
+				}
+				select {
+				case out <- l:
+				case <-sctx.Done():
 				}
 			})
+			runner.Run(sctx, s, func(raw run.Raw) {
+				for _, l := range stg.Feed(parse.Parse(raw.Label, raw.Text)) {
+					push(l)
+				}
+			})
+			flush() // stream ended or was cancelled: emit the pending summary
 			select {
 			case ended <- st:
 			case <-ctx.Done():
@@ -154,5 +176,17 @@ loop:
 	}
 	cancel()
 	wg.Wait()
+	// Lines still queued, including summaries flushed as the streams stopped.
+	for drained := false; code == 0 && !drained; {
+		select {
+		case l := <-out:
+			if err := renderer.Write(l); err != nil {
+				fmt.Fprintf(stderr, "klog: write: %v\n", err)
+				code = 1
+			}
+		default:
+			drained = true
+		}
+	}
 	return code
 }
