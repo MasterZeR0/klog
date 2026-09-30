@@ -31,7 +31,7 @@ type commonFlags struct {
 	context, ns, selector, deployment, pod, container string
 	level, grep, exclude, format, tz                  string
 	fields                                            multiFlag
-	theme                                             string
+	theme, template                                   string
 	noFlatten                                         bool
 }
 
@@ -47,7 +47,8 @@ func addCommon(fs *flag.FlagSet) *commonFlags {
 	fs.Var(&c.fields, "field", "JSON field filter key=value, key!=value or key~regex (repeatable)")
 	fs.StringVar(&c.grep, "grep", "", "keep lines matching this regex")
 	fs.StringVar(&c.exclude, "exclude", "", "drop lines matching this regex")
-	fs.StringVar(&c.format, "format", "pretty", "output format: pretty, json or raw")
+	fs.StringVar(&c.format, "format", "pretty", "output format: pretty, json, raw or template")
+	fs.StringVar(&c.template, "template", "", "Go text/template for --format template; fields: .Source .Time .Raw .Msg .Level .JSON")
 	fs.StringVar(&c.tz, "tz", "", "timezone for timestamps (e.g. America/New_York or Local; default: UTC)")
 	fs.BoolVar(&c.noFlatten, "no-flatten", false, "pretty format: print JSON lines as raw JSON instead of LEVEL msg key=val")
 	fs.StringVar(&c.theme, "theme", "", "theme file (default: <user config dir>/klog/theme.json)")
@@ -95,6 +96,9 @@ func (c *commonFlags) build() (common, error) {
 	}
 	out.view.Format, err = render.ParseFormat(c.format)
 	if err != nil {
+		return out, err
+	}
+	if err := out.view.SetTemplate(c.template); err != nil {
 		return out, err
 	}
 	if c.tz == "" {

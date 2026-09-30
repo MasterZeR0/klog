@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"text/template"
 	"time"
 	"unicode"
 	"unicode/utf8"
@@ -26,6 +27,7 @@ const (
 	Pretty Format = iota
 	JSON
 	Raw
+	Template // one line per entry from Options.Template
 )
 
 func ParseFormat(s string) (Format, error) {
@@ -36,8 +38,10 @@ func ParseFormat(s string) (Format, error) {
 		return JSON, nil
 	case "raw":
 		return Raw, nil
+	case "template":
+		return Template, nil
 	}
-	return 0, fmt.Errorf("unknown --format %q (want pretty, json or raw)", s)
+	return 0, fmt.Errorf("unknown --format %q (want pretty, json, raw or template)", s)
 }
 
 // Options configures a Renderer. The zero value is pretty text in UTC, no
@@ -45,9 +49,10 @@ func ParseFormat(s string) (Format, error) {
 type Options struct {
 	Format    Format
 	Color     bool
-	TZ        *time.Location // nil = UTC
-	NoFlatten bool           // pretty: keep JSON lines as raw JSON
-	Theme     theme.Theme    // zero value (no Labels) = theme.Default()
+	TZ        *time.Location     // nil = UTC
+	NoFlatten bool               // pretty: keep JSON lines as raw JSON
+	Theme     theme.Theme        // zero value (no Labels) = theme.Default()
+	Template  *template.Template // Format == Template; set with SetTemplate
 }
 
 type Renderer struct {
@@ -81,6 +86,8 @@ func (r *Renderer) Write(l parse.Line) error {
 	case Raw:
 		_, err := fmt.Fprintln(r.w, l.Raw)
 		return err
+	case Template:
+		return r.writeTemplate(l)
 	case JSON:
 		rec := record{Source: l.Label, Raw: l.Raw, JSON: l.JSON}
 		if !l.Time.IsZero() {
