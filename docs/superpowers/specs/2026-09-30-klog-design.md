@@ -129,3 +129,19 @@ A single dead pod stream does not change the exit code when other streams finish
 ## Out of scope for v1
 
 Pluggable log backend, config files and presets, TUI, metrics.
+
+## Clarifications from planning
+
+Decisions made while writing the implementation plan. They refine the sections above and change no settled decision.
+
+- Target flags: `-l <selector>`, `-d <deployment>`, `-p <pod-regex>`. Exactly one is required. `-n` is optional and defaults to the kubeconfig context's namespace. `-c` is a regex.
+- `--format` defaults to `pretty` everywhere. Colour is used only on a TTY with `NO_COLOR` unset, and never with `--out`.
+- `--format json` writes one object per line: `{"source","time","raw","json"}`. `time` and `json` are omitted when absent.
+- `KLOG_KUBECTL` overrides the kubectl binary path.
+- Durations use Go syntax, so the largest unit is `h`.
+- Field filters read top-level JSON keys only. A missing key fails `=` and `~` and satisfies `!=`.
+- A stack-trace continuation line starts with whitespace, `Caused by:`, `Suppressed:` or `... N more`. With no filter set, every line is kept.
+- `tail` retries a stream only when kubectl exits with an error: up to 3 times with 1s, 2s and 4s backoff. The counter resets when an attempt yields lines. Retries resume with `--since-time` and drop lines at or before the last timestamp seen. A clean EOF (container exited) is not retried. The stream restarts only when the container's `restartCount` rises.
+- `tail` warns and keeps going when a poll fails after startup. The first resolve failing exits 1.
+- `fetch` exits 1 when every stream failed or when it is interrupted. An interrupted `fetch` discards the `--out` temp file.
+- The retention-gap warning is per stream: it fires when the stream's first line is later than the requested start.
