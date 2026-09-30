@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"sync"
 	"time"
 
@@ -28,6 +29,7 @@ func runTail(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	since := fs.Duration("since", 5*time.Minute, "backlog to show before following, for example 10m")
 	poll := fs.Duration("poll", 5*time.Second, "how often to look for new and deleted pods")
 	wait := fs.Bool("wait", false, "keep polling when no pods match instead of exiting")
+	outPath := fs.String("out", "", "append to this file (flushed per line) instead of stdout")
 	if code, done := parseFlags(fs, args, stderr); done {
 		return code
 	}
@@ -65,9 +67,20 @@ func runTail(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		Opts:   run.Opts{Namespace: c.target.Namespace, Follow: true, Since: *since},
 		Notify: func(m string) { fmt.Fprintln(stderr, m) },
 	}
+	w := stdout
+	if *outPath != "" {
+		// os.File is unbuffered, so every rendered line reaches the file at once.
+		f, err := os.OpenFile(*outPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+		if err != nil {
+			fmt.Fprintf(stderr, "klog: --out: %v\n", err)
+			return 1
+		}
+		defer f.Close()
+		w = f
+	}
 	view := c.view
-	view.Color = useColor(stdout)
-	renderer := render.New(stdout, view)
+	view.Color = *outPath == "" && useColor(stdout)
+	renderer := render.New(w, view)
 
 	out := make(chan parse.Line, 256) // bounded: a slow terminal slows the runners
 	ended := make(chan *tailStream)
