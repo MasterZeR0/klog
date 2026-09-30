@@ -190,3 +190,25 @@ func TestFilterEmptyConfigKeepsEverything(t *testing.T) {
 		t.Fatalf("got %v", got)
 	}
 }
+
+func TestIsContinuation(t *testing.T) {
+	cases := map[string]bool{
+		"\tat Foo.bar(Foo.java:1)":       true,
+		"  at Foo":                       true,
+		"Caused by: java.io.IOException": true,
+		"Suppressed: X":                  true,
+		"... 12 more":                    true,
+		"... 3 common frames omitted":    true,
+		"":                               false,
+		"plain":                          false,
+		"java.lang.IOException: boom":    false,
+		"Caused by":                      false,
+		"caused by: x":                   false,
+		"...12 more":                     false,
+	}
+	for raw, want := range cases {
+		if got := IsContinuation(raw); got != want {
+			t.Errorf("IsContinuation(%q) = %v, want %v", raw, got, want)
+		}
+	}
+}

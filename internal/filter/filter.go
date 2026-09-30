@@ -34,7 +34,7 @@ func (f *Filter) Keep(l parse.Line) bool {
 	if !f.active {
 		return true
 	}
-	if l.JSON == nil && continuation.MatchString(l.Raw) {
+	if l.JSON == nil && IsContinuation(l.Raw) {
 		return f.prevKept
 	}
 	f.prevKept = f.match(l)
@@ -43,6 +43,10 @@ func (f *Filter) Keep(l parse.Line) bool {
 
 // continuation matches the start of a stack-trace continuation line.
 var continuation = regexp.MustCompile(`^(\s|Caused by:|Suppressed:|\.\.\. \d+ (more|common frames omitted))`)
+
+// IsContinuation reports whether raw, a non-JSON line, continues the stack
+// trace or message before it. Filter and the pretty renderer share this.
+func IsContinuation(raw string) bool { return continuation.MatchString(raw) }
 
 func (f *Filter) match(l parse.Line) bool {
 	c := f.cfg
