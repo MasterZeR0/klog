@@ -80,3 +80,7 @@ Exit codes: 0 ok, 1 runtime failure, 2 usage error, 3 no pods matched.
 go test ./...
 KLOG_IT_CONTEXT=kind-klog-it go test -tags integration ./integration/   # needs a cluster
 ```
+
+## License
+
+[MIT](LICENSE)
