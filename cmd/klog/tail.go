@@ -30,8 +30,12 @@ func runTail(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	incf := addIncident(fs)
 	wait := fs.Bool("wait", false, "keep polling when no pods match instead of exiting")
 	outPath := fs.String("out", "", "append to this file (one write per line) instead of stdout")
+	stats := fs.Bool("stats", false, "not available for tail; use fetch --stats")
 	if code, done := parseFlags(fs, args, stderr); done {
 		return code
+	}
+	if *stats {
+		return usageError(stderr, errors.New("--stats is only available for fetch"))
 	}
 	c, err := cf.build()
 	if err != nil {

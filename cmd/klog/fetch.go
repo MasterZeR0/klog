@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"errors"
+	"flag"
 	"fmt"
 	"io"
 	"os"
@@ -48,6 +49,9 @@ func runFetch(ctx context.Context, args []string, stdout, stderr io.Writer) int 
 		// the counts would be of the collapsed lines, not of the logs
 		return usageError(stderr, errors.New("--stats cannot be combined with --dedupe"))
 	}
+	if *showStats && c.view.Format != render.Pretty && c.view.Format != render.JSON {
+		return usageError(stderr, errors.New("--stats needs --format pretty or json"))
+	}
 
 	now := time.Now()
 	var sinceT time.Time
@@ -63,6 +67,11 @@ func runFetch(ctx context.Context, args []string, stdout, stderr io.Writer) int 
 			return usageError(stderr, fmt.Errorf("invalid --since-time %q: want RFC3339", *sinceTime))
 		}
 	default:
+		sinceSet := false
+		fs.Visit(func(f *flag.Flag) { sinceSet = sinceSet || f.Name == "since" })
+		if sinceSet {
+			return usageError(stderr, errors.New("--since must be positive"))
+		}
 		return usageError(stderr, errors.New("fetch needs --since or --since-time"))
 	}
 	var untilT time.Time
@@ -137,7 +146,7 @@ func runFetch(ctx context.Context, args []string, stdout, stderr io.Writer) int 
 					first = false
 					if l.Time.After(sinceT) {
 						fmt.Fprintf(stderr, "klog: warning: earliest line for [%s] is %s, later than the requested start %s; older logs may be rotated away or the pod started later\n",
-							s.Label, l.Time.Format(time.RFC3339), sinceT.Format(time.RFC3339))
+							s.Label, l.Time.UTC().Format(time.RFC3339), sinceT.UTC().Format(time.RFC3339))
 					}
 				}
 				if !untilT.IsZero() && !l.Time.IsZero() && l.Time.After(untilT) {

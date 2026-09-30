@@ -76,3 +76,58 @@ func TestContextPerStreamState(t *testing.T) {
 		t.Fatalf("got %q", got)
 	}
 }
+
+// Context counts log records: a head line plus its frames travel together.
+var traceThenPino = []string{
+	"java.lang.Exception: x",
+	"   at Foo.bar(Foo.java:1)",
+	"   at Foo.baz(Foo.java:2)",
+	`{"level":30,"msg":"pino info"}`,
+	`{"level":30,"msg":"pino35"}`,
+	`{"level":100,"msg":"pino100"}`,
+	`{"level":50,"msg":"pino err"}`,
+}
+
+func TestContextBeforeCountsRecordsNotLines(t *testing.T) {
+	for _, tc := range []struct {
+		before int
+		want   []string // records kept before "pino err"
+	}{
+		{1, traceThenPino[5:6]},
+		{2, traceThenPino[4:6]},
+		{4, traceThenPino[0:6]}, // the 3-line trace is one record: whole, never orphaned
+	} {
+		got := feed(grepCtx("pino err", tc.before, 0), traceThenPino...)
+		want := append(append([]string{}, tc.want...), traceThenPino[6])
+		if strings.Join(got, "|") != strings.Join(want, "|") {
+			t.Fatalf("-B %d: got %q, want %q", tc.before, got, want)
+		}
+	}
+}
+
+func TestContextBeforeWholeTraceOrNothing(t *testing.T) {
+	// -B 1 over a trace record right before the match keeps all of its frames.
+	got := feed(grepCtx("HIT", 1, 0), "old", "Exception: x", "  at a", "  at b", "HIT")
+	if want := "Exception: x|  at a|  at b|HIT"; strings.Join(got, "|") != want {
+		t.Fatalf("got %q, want %q", got, want)
+	}
+}
+
+func TestContextAfterCountsRecordsAndKeepsFrames(t *testing.T) {
+	got := feed(grepCtx("HIT", 0, 1), "HIT", "Exception: x", "  at a", "  at b", "next", "  at c")
+	if want := "HIT|Exception: x|  at a|  at b"; strings.Join(got, "|") != want {
+		t.Fatalf("got %q, want %q", got, want)
+	}
+}
+
+func TestContextJSONThenIndentedText(t *testing.T) {
+	// An indented line after a JSON line is a continuation of that record.
+	got := feed(grepCtx("HIT", 1, 0), `{"msg":"j"}`, "  indented", "plain", "HIT")
+	if want := "plain|HIT"; strings.Join(got, "|") != want {
+		t.Fatalf("got %q, want %q", got, want)
+	}
+	got = feed(grepCtx("HIT", 1, 0), `{"msg":"j"}`, "  indented", "HIT")
+	if want := `{"msg":"j"}|  indented|HIT`; strings.Join(got, "|") != want {
+		t.Fatalf("got %q, want %q", got, want)
+	}
+}

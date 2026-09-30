@@ -229,6 +229,11 @@ func TestFetchRetentionGapWarning(t *testing.T) {
 	if !strings.Contains(errs, "earliest line for [a-1]") {
 		t.Fatalf("stderr %q", errs)
 	}
+	// Both times are UTC even when --since-time was given with an offset.
+	_, _, errs = klog(t, "fetch", "-n", "shop", "-l", "app=web", "--since-time", "2026-09-30T13:00:00+02:00")
+	if !strings.Contains(errs, "is 2026-09-30T12:00:01Z, later than the requested start 2026-09-30T11:00:00Z;") {
+		t.Fatalf("stderr %q", errs)
+	}
 	// since-time at or after the first line: no warning for a-1.
 	_, _, errs = klog(t, "fetch", "-n", "shop", "-p", "^a-", "--since-time", "2026-09-30T12:00:02Z")
 	if strings.Contains(errs, "earliest line") {

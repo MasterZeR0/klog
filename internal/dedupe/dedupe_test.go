@@ -54,7 +54,7 @@ func TestFlushOnEnd(t *testing.T) {
 	}
 	s.Flush()
 	s.Flush() // idempotent
-	if want := "a\n… repeated 1 more times\n"; summary(*got) != want {
+	if want := "a\n… repeated 1 more time\n"; summary(*got) != want {
 		t.Fatalf("got %q, want %q", summary(*got), want)
 	}
 }
@@ -76,7 +76,7 @@ func TestRunsAreIndependent(t *testing.T) {
 		s.Push(line(r, 0))
 	}
 	s.Flush()
-	if want := "a\n… repeated 1 more times\nb\n… repeated 2 more times\n"; summary(*got) != want {
+	if want := "a\n… repeated 1 more time\nb\n… repeated 2 more times\n"; summary(*got) != want {
 		t.Fatalf("got %q", summary(*got))
 	}
 }
@@ -117,7 +117,7 @@ func TestCompareIgnoresTimestamp(t *testing.T) {
 	s.Push(parse.Parse("a", "2026-09-30T12:00:01.000000000Z same"))
 	s.Push(parse.Parse("a", "2026-09-30T12:00:09.000000000Z same"))
 	s.Flush()
-	if want := "same\n… repeated 1 more times\n"; summary(*got) != want {
+	if want := "same\n… repeated 1 more time\n"; summary(*got) != want {
 		t.Fatalf("got %q", summary(*got))
 	}
 }

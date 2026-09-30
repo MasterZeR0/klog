@@ -49,3 +49,24 @@ func TestTailRejectsStats(t *testing.T) {
 		t.Fatalf("kubectl was called: %q", calls)
 	}
 }
+
+func TestStatsAndSinceUsageMessages(t *testing.T) {
+	setup(t)
+	cases := []struct {
+		want string
+		args []string
+	}{
+		{"--stats needs --format pretty or json", with("--stats", "--format", "raw")},
+		{"--stats needs --format pretty or json", with("--stats", "--format", "template", "--template", "{{.Raw}}")},
+		{"--stats is only available for fetch", append([]string{"tail", "--stats"}, tailBase...)},
+		{"--since must be positive", []string{"fetch", "-l", "a=b", "--since", "0d"}},
+		{"--since must be positive", []string{"fetch", "-l", "a=b", "--since", "0"}},
+	}
+	for _, c := range cases {
+		out, errs := &safeBuf{}, &safeBuf{}
+		code := execute(context.Background(), c.args, out, errs)
+		if code != 2 || out.String() != "" || errs.String() != "klog: "+c.want+"\n" {
+			t.Errorf("%v: code %d, stdout %q, stderr %q, want %q", c.args, code, out.String(), errs.String(), c.want)
+		}
+	}
+}

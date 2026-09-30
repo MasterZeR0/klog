@@ -227,3 +227,18 @@ func TestFetchFollowIDBufferLimit(t *testing.T) {
 		t.Fatalf("code %d, stdout %q, stderr %q", code, out, errs)
 	}
 }
+
+func TestFetchContextBeforeNeverOrphansFrames(t *testing.T) {
+	f := setup(t)
+	f.SetLogs("a-1", "app", logs([]int{1, 2, 3, 4, 5}, "java.lang.Exception: x", "   at Foo.bar(Foo.java:1)", "   at Foo.baz(Foo.java:2)", `{"level":30,"msg":"pino info"}`, `{"level":50,"msg":"pino err"}`))
+	f.SetLogs("b-1", "app", "")
+	for before, want := range map[string][]string{
+		"1": {`{"level":30,"msg":"pino info"}`, `{"level":50,"msg":"pino err"}`},
+		"2": {"java.lang.Exception: x", "   at Foo.bar(Foo.java:1)", "   at Foo.baz(Foo.java:2)", `{"level":30,"msg":"pino info"}`, `{"level":50,"msg":"pino err"}`},
+	} {
+		_, out, _ := klog(t, with("--format", "raw", "--grep", "pino err", "-B", before)...)
+		if !equal(lines(out), want) {
+			t.Fatalf("-B %s: got\n%s", before, out)
+		}
+	}
+}

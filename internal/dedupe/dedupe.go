@@ -13,7 +13,7 @@ import (
 //
 // The first line of a run always goes out at once, so a lone line is never
 // delayed. When a run of repeats ends, one more item follows: in pretty
-// output a "… repeated N more times" summary line; with structured set
+// output a "… repeated N more times" summary ("1 more time" for one) line; with structured set
 // (json and template output, which have no room for a summary line) a copy
 // of the last repeat (its source, time, raw and JSON) with Repeats = N, the
 // number of identical lines after the first.
@@ -49,7 +49,11 @@ func (s *Stage) Flush() {
 			s.last.Repeats = s.n
 			s.emit(s.last)
 		} else {
-			s.emit(parse.Line{Label: s.first.Label, Time: s.last.Time, Raw: fmt.Sprintf("… repeated %d more times", s.n)})
+			more := "times"
+			if s.n == 1 {
+				more = "time"
+			}
+			s.emit(parse.Line{Label: s.first.Label, Time: s.last.Time, Raw: fmt.Sprintf("… repeated %d more %s", s.n, more)})
 		}
 	}
 	s.have, s.n = false, 0

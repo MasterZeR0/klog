@@ -2,6 +2,8 @@
 
 Complete reference for all commands, flags, and features.
 
+Every long flag also accepts a single dash (`-after` works as well as `--after`); the double-dash spellings (`--after`, `--before`) are the documented ones, even though `--help` prints the single-dash form.
+
 ## Commands
 
 ### `klog tail` — Follow logs live
@@ -48,7 +50,7 @@ klog fetch [flags]
 
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
-| `--since` | duration | (required) | How far back to fetch Example: 2h, 30m, 2d |
+| `--since` | duration | (required) | How far back to fetch Example: 2h, 30m, 2d. Must be positive; `--since 0` is a usage error |
 | `--since-time` | string | — | Absolute start time in RFC3339 format. Mutually exclusive with `--since` |
 | `--until` | string | — | End time: RFC3339 format or duration meaning "that long ago" |
 | `--previous` | bool | false | Include logs from the previous container instance (after restarts) |
@@ -203,14 +205,14 @@ Three flags for working out what happened around an error. `-A`, `-B`, `-C` and 
 
 | Flag | Description |
 |------|-------------|
-| `-A N`, `--after N` | Also print the N lines after each match |
-| `-B N`, `--before N` | Also print the N lines before each match |
+| `-A N`, `--after N` | Also print the N log records after each match |
+| `-B N`, `--before N` | Also print the N log records before each match |
 | `-C N` | Both sides. As in grep, an explicit `-A` or `-B` overrides `-C` for its side, in any flag order: `-C 5 -A 0` prints 5 lines before and none after |
 
 A match is a line that passes every filter; `-A`/`-B`/`-C` need `--grep` and are a usage error without it. Context lines are printed even though they do not match, so `--level`, `--field` and `--exclude` do not apply to them.
 
 - Context is per pod and container: lines of one pod are never used as context for a match in another.
-- A line is printed once even when matches overlap. Stack-trace lines stay attached to their match and are not counted as context.
+- A line is printed once even when matches overlap. Context counts log records, not physical lines: a record is a line plus its stack-trace lines, and those travel with it, so `-B 1` prints the whole previous trace (header and frames) or nothing, never frames without their header, and after-context records keep their own frames. A match's own stack-trace lines stay attached to it and are not counted.
 - There is no `--` separator between groups: in a merged multi-pod stream a separator has no meaningful position. Use `--format json` or the pod label to tell groups apart.
 - With `tail`, after-context continues across the following lines as they arrive.
 
@@ -235,7 +237,7 @@ klog tail  -n shop -l app=web --field 'status=500' --follow-id requestId
 
 ### Level counts: `fetch --stats`
 
-Prints counts of the lines that remain after the filters (including `-A`/`-B`/`-C` and `--follow-id` lines) instead of the lines themselves: one row per pod (sorted), columns `TRACE DEBUG INFO WARN ERROR FATAL ?`, and `TOTAL` row and column. `?` counts lines with no recognised level, including non-JSON lines.
+Prints counts of the lines that remain after the filters (including `-A`/`-B`/`-C` and `--follow-id` lines) instead of the lines themselves: one row per pod (sorted), columns `TRACE DEBUG INFO WARN ERROR FATAL ?`, and `TOTAL` row and column. `?` counts lines with no recognised level, including non-JSON lines. `--stats` needs `--format pretty` (the table) or `--format json`; with `raw` or `template` it is a usage error (exit 2, "--stats needs --format pretty or json").
 
 ```
 $ klog fetch -n shop -d checkout --since 1h --stats
@@ -259,7 +261,7 @@ With `--format json` it prints one object per pod, sorted by pod, with every lev
 |------|-------|-------------|
 | `--format` | `pretty` | (default) Pretty-printed with colors, JSON flattened to `LEVEL msg key=val ...`. Terminal colors via `NO_COLOR` env var and theme file. |
 | `--format` | `json` | One JSON object per line with keys: `source`, `time`, `raw`, `json` |
-| `--format` | `raw` | Raw log lines with no parsing or filtering applied |
+| `--format` | `raw` | Raw log lines, unstyled and unflattened, with no JSON wrapping. All filters (`--level`, `--field`, `--grep`, `--exclude`, `-A`/`-B`/`-C`, `--follow-id`) still apply |
 | `--format` | `template` | One line per entry rendered from `--template` (see below) |
 | `--template` | string | Go [text/template](https://pkg.go.dev/text/template) for `--format template`. Required with it, and an error without it |
 
@@ -287,7 +289,7 @@ A template that does not parse is a usage error at startup. A field that is miss
 
 ### Collapsing Repeats
 
-`--dedupe` (tail and fetch) collapses consecutive identical lines per pod, ignoring the kubectl timestamp. The first line is printed, followed by one `… repeated N more times` line when the run ends (a different line arrives, the stream ends or klog is interrupted). With `--format json` and `--format template` there is no synthetic text line. The first line of a run is printed at once, with no `repeats` (`.Repeats` is 0). If identical lines follow, then when the run ends one more record is printed: a copy of the last repeat (same `source`, `raw` and `json`; `time` of that last repeat) with `"repeats": N` (`.Repeats`), where N is how many identical lines came after the first. A line seen once has no second record, so `repeats` is always at least 1 when present, and a record with `repeats` is a summary of N lines already printed, not a new line. In templates test `{{if .Repeats}}` to tell the two apart. `--format raw` has no room for either, so `--dedupe --format raw` is a usage error (exit 2), as is `fetch --stats --dedupe` (the counts would be of the collapsed lines).
+`--dedupe` (tail and fetch) collapses consecutive identical lines per pod, ignoring the kubectl timestamp. The first line is printed, followed by one `… repeated N more times` line (`… repeated 1 more time` when N is 1) when the run ends (a different line arrives, the stream ends or klog is interrupted). With `--format json` and `--format template` there is no synthetic text line. The first line of a run is printed at once, with no `repeats` (`.Repeats` is 0). If identical lines follow, then when the run ends one more record is printed: a copy of the last repeat (same `source`, `raw` and `json`; `time` of that last repeat) with `"repeats": N` (`.Repeats`), where N is how many identical lines came after the first. A line seen once has no second record, so `repeats` is always at least 1 when present, and a record with `repeats` is a summary of N lines already printed, not a new line. In templates test `{{if .Repeats}}` to tell the two apart. `--format raw` has no room for either, so `--dedupe --format raw` is a usage error (exit 2), as is `fetch --stats --dedupe` (the counts would be of the collapsed lines).
 
 ```json
 {"source":"api-1","time":"2026-09-30T12:00:01Z","raw":"connection lost"}
