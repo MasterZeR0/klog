@@ -1,0 +1,154 @@
+package main
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"io"
+	"sync"
+	"time"
+
+	"klog/internal/filter"
+	"klog/internal/parse"
+	"klog/internal/render"
+	"klog/internal/resolve"
+	"klog/internal/run"
+)
+
+// tailStream is the main loop's record of one running container stream.
+type tailStream struct {
+	cancel   context.CancelFunc
+	done     bool // the stream ended; set by the main loop only
+	restarts int  // container restartCount when this stream started
+}
+
+func runTail(ctx context.Context, args []string, stdout, stderr io.Writer) int {
+	fs := newFlagSet("tail", stderr)
+	cf := addCommon(fs)
+	since := fs.Duration("since", 5*time.Minute, "backlog to show before following, for example 10m")
+	poll := fs.Duration("poll", 5*time.Second, "how often to look for new and deleted pods")
+	wait := fs.Bool("wait", false, "keep polling when no pods match instead of exiting")
+	if code, done := parseFlags(fs, args, stderr); done {
+		return code
+	}
+	c, err := cf.build()
+	if err != nil {
+		return usageError(stderr, err)
+	}
+	if *since < 0 {
+		return usageError(stderr, errors.New("--since must not be negative"))
+	}
+	if *poll <= 0 {
+		return usageError(stderr, errors.New("--poll must be positive"))
+	}
+
+	streams, err := resolve.Resolve(ctx, c.kubectl, c.target)
+	if err != nil {
+		if ctx.Err() != nil {
+			return 0
+		}
+		return kubectlFailure(stderr, err)
+	}
+	if len(streams) == 0 {
+		if !*wait {
+			fmt.Fprintf(stderr, "klog: no pods matched (%s)\n", c.target.Describe())
+			return 3
+		}
+		fmt.Fprintf(stderr, "klog: waiting for pods (%s)\n", c.target.Describe())
+	}
+
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	runner := run.Runner{
+		K:      c.kubectl,
+		Opts:   run.Opts{Namespace: c.target.Namespace, Follow: true, Since: *since},
+		Notify: func(m string) { fmt.Fprintln(stderr, m) },
+	}
+	renderer := render.New(stdout, c.format, useColor(stdout))
+
+	out := make(chan parse.Line, 256) // bounded: a slow terminal slows the runners
+	ended := make(chan *tailStream)
+	active := map[string]*tailStream{}
+	var wg sync.WaitGroup
+
+	start := func(s run.Stream) {
+		sctx, scancel := context.WithCancel(ctx)
+		st := &tailStream{cancel: scancel, restarts: s.Restarts}
+		active[s.Pod+"/"+s.Container] = st
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			f := filter.New(c.filter)
+			runner.Run(sctx, s, func(raw run.Raw) {
+				l := parse.Parse(raw.Label, raw.Text)
+				if !f.Keep(l) {
+					return
+				}
+				select {
+				case out <- l:
+				case <-sctx.Done():
+				}
+			})
+			select {
+			case ended <- st:
+			case <-ctx.Done():
+			}
+		}()
+	}
+
+	reconcile := func(streams []run.Stream) {
+		seen := map[string]bool{}
+		for _, s := range streams {
+			key := s.Pod + "/" + s.Container
+			seen[key] = true
+			if st := active[key]; st != nil {
+				if !st.done || s.Restarts <= st.restarts {
+					continue // still running, or finished and not restarted
+				}
+				st.cancel()
+			}
+			start(s)
+		}
+		for key, st := range active {
+			if !seen[key] {
+				st.cancel()
+				delete(active, key)
+			}
+		}
+	}
+	reconcile(streams)
+
+	// ponytail: resolve runs on this loop, so a slow API server briefly delays
+	// output. Move it to its own goroutine if that ever shows up.
+	tick := time.NewTicker(*poll)
+	defer tick.Stop()
+	code := 0
+loop:
+	for {
+		select {
+		case <-ctx.Done():
+			break loop
+		case l := <-out:
+			if err := renderer.Write(l); err != nil {
+				fmt.Fprintf(stderr, "klog: write: %v\n", err)
+				code = 1
+				break loop
+			}
+		case st := <-ended:
+			st.done = true
+		case <-tick.C:
+			streams, err := resolve.Resolve(ctx, c.kubectl, c.target)
+			if err != nil {
+				if ctx.Err() == nil {
+					fmt.Fprintf(stderr, "klog: warning: could not refresh pods: %v\n", err)
+				}
+				continue
+			}
+			reconcile(streams)
+		}
+	}
+	cancel()
+	wg.Wait()
+	return code
+}

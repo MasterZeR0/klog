@@ -1,0 +1,169 @@
+package main
+
+import (
+	"errors"
+	"flag"
+	"fmt"
+	"io"
+	"os"
+	"os/exec"
+	"regexp"
+	"strings"
+	"sync"
+	"time"
+
+	"klog/internal/filter"
+	"klog/internal/render"
+	"klog/internal/resolve"
+	"klog/internal/run"
+)
+
+type multiFlag []string
+
+func (m *multiFlag) String() string     { return strings.Join(*m, ",") }
+func (m *multiFlag) Set(v string) error { *m = append(*m, v); return nil }
+
+// commonFlags are the raw flag values shared by tail and fetch.
+type commonFlags struct {
+	context, ns, selector, deployment, pod, container string
+	level, grep, exclude, format                      string
+	fields                                            multiFlag
+}
+
+func addCommon(fs *flag.FlagSet) *commonFlags {
+	c := &commonFlags{}
+	fs.StringVar(&c.context, "context", "", "kubeconfig context")
+	fs.StringVar(&c.ns, "n", "", "namespace (default: the context's namespace)")
+	fs.StringVar(&c.selector, "l", "", "target: label selector")
+	fs.StringVar(&c.deployment, "d", "", "target: deployment name")
+	fs.StringVar(&c.pod, "p", "", "target: pod name regex")
+	fs.StringVar(&c.container, "c", "", "container name regex (default: all containers)")
+	fs.StringVar(&c.level, "level", "", "minimum level: TRACE, DEBUG, INFO, WARN, ERROR or FATAL")
+	fs.Var(&c.fields, "field", "JSON field filter key=value, key!=value or key~regex (repeatable)")
+	fs.StringVar(&c.grep, "grep", "", "keep lines matching this regex")
+	fs.StringVar(&c.exclude, "exclude", "", "drop lines matching this regex")
+	fs.StringVar(&c.format, "format", "pretty", "output format: pretty, json or raw")
+	return c
+}
+
+// common is the validated result of commonFlags.
+type common struct {
+	kubectl run.Kubectl
+	target  resolve.Target
+	filter  filter.Config
+	format  render.Format
+}
+
+func (c *commonFlags) build() (common, error) {
+	var out common
+	out.kubectl = run.Kubectl{Bin: os.Getenv("KLOG_KUBECTL"), Context: c.context}
+	out.target = resolve.Target{
+		Namespace: c.ns, Selector: c.selector, Deployment: c.deployment,
+		PodRegex: c.pod, Container: c.container,
+	}
+	if err := out.target.Validate(); err != nil {
+		return out, err
+	}
+	if c.level != "" {
+		lv, ok := filter.ParseLevel(c.level)
+		if !ok {
+			return out, fmt.Errorf("unknown --level %q (want TRACE, DEBUG, INFO, WARN, ERROR or FATAL)", c.level)
+		}
+		out.filter.MinLevel = lv
+	}
+	for _, s := range c.fields {
+		f, err := filter.ParseField(s)
+		if err != nil {
+			return out, err
+		}
+		out.filter.Fields = append(out.filter.Fields, f)
+	}
+	var err error
+	if out.filter.Grep, err = compileOpt("--grep", c.grep); err != nil {
+		return out, err
+	}
+	if out.filter.Exclude, err = compileOpt("--exclude", c.exclude); err != nil {
+		return out, err
+	}
+	out.format, err = render.ParseFormat(c.format)
+	return out, err
+}
+
+func compileOpt(name, expr string) (*regexp.Regexp, error) {
+	if expr == "" {
+		return nil, nil
+	}
+	re, err := regexp.Compile(expr)
+	if err != nil {
+		return nil, fmt.Errorf("invalid %s: %w", name, err)
+	}
+	return re, nil
+}
+
+func newFlagSet(name string, stderr io.Writer) *flag.FlagSet {
+	fs := flag.NewFlagSet("klog "+name, flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	return fs
+}
+
+// parseFlags parses args. It returns (code, true) when the caller must exit now.
+func parseFlags(fs *flag.FlagSet, args []string, stderr io.Writer) (int, bool) {
+	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return 0, true
+		}
+		return 2, true // the flag package already printed the error and usage
+	}
+	if fs.NArg() > 0 {
+		fmt.Fprintf(stderr, "klog: unexpected argument %q\n", fs.Arg(0))
+		return 2, true
+	}
+	return 0, false
+}
+
+func usageError(stderr io.Writer, err error) int {
+	fmt.Fprintf(stderr, "klog: %v\n", err)
+	return 2
+}
+
+func kubectlFailure(stderr io.Writer, err error) int {
+	fmt.Fprintf(stderr, "klog: %v\n", err)
+	if errors.Is(err, exec.ErrNotFound) || errors.Is(err, os.ErrNotExist) {
+		fmt.Fprintln(stderr, "hint: kubectl not found; install it, or set KLOG_KUBECTL to its path")
+	} else {
+		fmt.Fprintln(stderr, "hint: check your context, namespace and login (try: kubectl get pods)")
+	}
+	return 1
+}
+
+// parseWhen reads an RFC3339 time, or a duration meaning "that long ago".
+func parseWhen(s string, now time.Time) (time.Time, error) {
+	if t, err := time.Parse(time.RFC3339, s); err == nil {
+		return t, nil
+	}
+	if d, err := time.ParseDuration(s); err == nil && d >= 0 {
+		return now.Add(-d), nil
+	}
+	return time.Time{}, fmt.Errorf("invalid time %q: want RFC3339 (2026-09-30T12:00:00Z) or a duration such as 30m", s)
+}
+
+// useColor is true only for a terminal stdout with NO_COLOR unset.
+func useColor(w io.Writer) bool {
+	f, ok := w.(*os.File)
+	if !ok || os.Getenv("NO_COLOR") != "" {
+		return false
+	}
+	st, err := f.Stat()
+	return err == nil && st.Mode()&os.ModeCharDevice != 0
+}
+
+type syncWriter struct {
+	mu sync.Mutex
+	w  io.Writer
+}
+
+func (s *syncWriter) Write(p []byte) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.w.Write(p)
+}
