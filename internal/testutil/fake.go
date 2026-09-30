@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -57,6 +58,9 @@ type Fake struct {
 
 func NewFake(t testing.TB) *Fake {
 	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("fake kubectl is a sh script") // ponytail: port to a Go helper binary if Windows CI needs these tests
+	}
 	dir := t.TempDir()
 	bin := filepath.Join(dir, "kubectl")
 	if err := os.WriteFile(bin, []byte(fmt.Sprintf(script, dir)), 0o755); err != nil {

@@ -8,7 +8,7 @@ Tail and fetch logs from many Kubernetes pods at once, with level, JSON field an
 go install klog/cmd/klog@latest   # or download a release archive
 ```
 
-Needs `kubectl` on the PATH. Set `KLOG_KUBECTL` to use another binary.
+Runs on Linux, macOS and Windows (release archives for all three). Needs `kubectl` on the PATH. Set `KLOG_KUBECTL` to use another binary.
 
 ## Configuration
 
@@ -54,7 +54,7 @@ klog fetch @checkout-prod --since 2h --level ERROR
 
 Pretty output colours levels and stack traces on a terminal (`NO_COLOR` turns it off) and prints JSON lines as `LEVEL msg  key=val ...`; keep the raw JSON with `--no-flatten`.
 
-Colours come from `--theme FILE`, else `<user config dir>/klog/theme.json` (`~/.config/klog/theme.json` on Linux, `~/Library/Application Support/klog/theme.json` on macOS). Every value is an SGR code such as `1;31`; omitted fields keep their default:
+Colours come from `--theme FILE`, else `<user config dir>/klog/theme.json` (`~/.config/klog/theme.json` on Linux, `~/Library/Application Support/klog/theme.json` on macOS, `%AppData%\klog\theme.json` on Windows). Every value is an SGR code such as `1;31`; omitted fields keep their default:
 
 ```json
 {
