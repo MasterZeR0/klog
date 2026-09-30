@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 	"unicode/utf8"
 
 	"klog/internal/filter"
@@ -169,13 +170,13 @@ func (r *Renderer) flatten(l parse.Line, lv filter.Level, hasLevel bool) string 
 		head = append(head, r.paint(r.levelStyle(lv), levelNames[lv]))
 	}
 	if msg != "" {
-		head = append(head, strings.NewReplacer("\n", `\n`, "\r", `\r`).Replace(msg))
+		head = append(head, escapeText(msg))
 	}
 	out := strings.Join(head, " ")
 	if len(keys) > 0 {
 		pairs := make([]string, len(keys))
 		for i, k := range keys {
-			pairs[i] = r.paint(r.o.Theme.Keys, k+"=") + fmtValue(l.JSON[k])
+			pairs[i] = r.paint(r.o.Theme.Keys, escapeText(k)+"=") + fmtValue(l.JSON[k])
 		}
 		if out != "" {
 			out += "  "
@@ -188,11 +189,27 @@ func (r *Renderer) flatten(l parse.Line, lv filter.Level, hasLevel bool) string 
 	return out
 }
 
+// escapeText prints s with every non-printable rune (ESC, BEL, tab, newline,
+// bidi overrides...) as a Go escape, so log content never reaches the terminal
+// as a control sequence and one record stays one line.
+func escapeText(s string) string {
+	var b strings.Builder
+	for _, r := range s {
+		if r != ' ' && !unicode.IsPrint(r) {
+			q := strconv.QuoteRune(r)
+			b.WriteString(q[1 : len(q)-1])
+		} else {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
 // fmtValue prints one JSON value for a key=value pair.
 func fmtValue(v any) string {
 	switch x := v.(type) {
 	case string:
-		if x == "" || strings.ContainsAny(x, " \t\r\n\"") {
+		if x == "" || strings.ContainsAny(x, " \"") || strings.IndexFunc(x, func(r rune) bool { return !unicode.IsPrint(r) }) >= 0 {
 			return strconv.Quote(x)
 		}
 		return x

@@ -212,6 +212,12 @@ func TestPrettyFlatten(t *testing.T) {
 		{"big integer stays exact", `{"msg":"m","id":12345678901234567890}`, `m  id=12345678901234567890`},
 		{"nested values are compact json", `{"msg":"m","o":{"b":1,"a":[1,"x<y"]},"t":true,"z":null}`, `m  o={"a":[1,"x<y"],"b":1} t=true z=null`},
 		{"time keys are kept without a kubectl timestamp", `{"msg":"m","ts":"2026"}`, `m  ts=2026`},
+		{"escape in msg is escaped", `{"msg":"x \u001b[31mRED"}`, `x \x1b[31mRED`},
+		{"escape in value is quoted", `{"msg":"m","k":"v\u001b[2Jx"}`, `m  k="v\x1b[2Jx"`},
+		{"escape in key is escaped", `{"msg":"m","a\u001b[0mb":1}`, `m  a\x1b[0mb=1`},
+		{"bel in value is quoted", `{"msg":"m","k":"a\u0007b"}`, `m  k="a\ab"`},
+		{"tab in msg is escaped", `{"msg":"a\tb"}`, `a\tb`},
+		{"bidi override in value is quoted", `{"msg":"m","k":"a\u202eb"}`, `m  k="a\u202eb"`},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
