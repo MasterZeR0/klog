@@ -143,10 +143,23 @@ func Start(addr string, hub *Hub) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
+	if err := requireLoopback(ln); err != nil {
+		return nil, err
+	}
 	_, port, _ := net.SplitHostPort(ln.Addr().String())
 	s := &Server{hub: hub, ln: ln, srv: &http.Server{Handler: Handler(hub, port, ln.Addr().String())}}
 	go s.srv.Serve(ln)
 	return s, nil
+}
+
+// requireLoopback closes ln and fails when it is not bound to a loopback IP. A
+// name such as localhost is resolved by the system and might not be loopback.
+func requireLoopback(ln net.Listener) error {
+	if a, ok := ln.Addr().(*net.TCPAddr); !ok || !a.IP.IsLoopback() {
+		ln.Close()
+		return fmt.Errorf("listener bound to non-loopback address %s", ln.Addr())
+	}
+	return nil
 }
 
 // URL is where a browser reaches the server.

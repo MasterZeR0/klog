@@ -325,3 +325,27 @@ func TestStartServesOnItsBoundLoopbackAddress(t *testing.T) {
 		}
 	}
 }
+
+type fakeListener struct {
+	net.Listener
+	addr net.Addr
+	shut bool
+}
+
+func (f *fakeListener) Addr() net.Addr { return f.addr }
+func (f *fakeListener) Close() error   { f.shut = true; return nil }
+
+func TestRequireLoopback(t *testing.T) {
+	bad := &fakeListener{addr: &net.TCPAddr{IP: net.ParseIP("192.0.2.1"), Port: 80}}
+	if err := requireLoopback(bad); err == nil || !strings.Contains(err.Error(), "non-loopback") || !bad.shut {
+		t.Fatalf("err %v, closed %v: want an error and a closed listener", err, bad.shut)
+	}
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	if err := requireLoopback(ln); err != nil {
+		t.Fatalf("loopback listener refused: %v", err)
+	}
+}
