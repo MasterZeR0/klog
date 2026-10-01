@@ -45,6 +45,15 @@ Incident kit (details in [COMMANDS.md](COMMANDS.md#incident-debugging)):
 
 For piping: `--format template --template '{{.Source}} {{.Level}} {{.Msg}}'` renders one line per entry from `.Source`, `.Time`, `.Raw`, `.Msg`, `.Level`, `.JSON` and `.Repeats` (lines folded by `--dedupe`); `--out FILE` writes `tail` output to a file (appending) as well as `fetch` output; `--dedupe` collapses consecutive identical lines per pod into the first line plus `… repeated N more times` (`1 more time` for one; in json and template output, a second record with `repeats` set; not available with `--format raw`).
 
+Browser view (`tail` only): add `--web` to read and search the lines in a browser instead of the terminal. klog serves a page on a free loopback port and prints its URL; stdout stays empty. `--web-addr 127.0.0.1:8080` picks the address (loopback only, no auth). It cannot be combined with `--out`, `--format` or `--template`.
+
+```
+klog tail -n shop -d checkout --level WARN --web
+klog: web UI at http://127.0.0.1:41873
+```
+
+The page searches the lines it has already received (substring, or regex and case toggles), hides non-matching lines, keeps a stack trace with its parent line, and can hide pods by clicking their chip. Click a line to see its JSON.
+
 Save flags you use often as a profile in `<user config dir>/klog/profiles.json` (`{"checkout-prod": ["-n","shop","-d","checkout","--level","WARN"]}`) and start a command with its name. Flags after it override the profile's:
 
 ```
@@ -73,6 +82,7 @@ Exit codes: 0 ok, 1 runtime failure, 2 usage error, 3 no pods matched.
 - `--field` dotted paths do not index into arrays.
 - History is whatever the kubelet still keeps. Logs of deleted pods are gone.
 - `tail` output is in arrival order, so ordering across pods is approximate. `fetch` sorts by kubectl timestamp.
+- `--web` search covers the last 20,000 lines klog kept and at most 20,000 rows in the tab. For more history, restart with a larger `--since`.
 
 ## Test
 

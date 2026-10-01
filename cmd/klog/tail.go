@@ -31,15 +31,23 @@ func runTail(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	wait := fs.Bool("wait", false, "keep polling when no pods match instead of exiting")
 	outPath := fs.String("out", "", "append to this file (one write per line) instead of stdout")
 	stats := fs.Bool("stats", false, "not available for tail; use fetch --stats")
+	webOn := fs.Bool("web", false, "serve the logs in a browser (search, filter by pod) on a loopback address; stdout stays empty")
+	webAddr := fs.String("web-addr", "", "with --web: listen address, must be loopback (default 127.0.0.1:0, a free port)")
 	if code, done := parseFlags(fs, args, stderr); done {
 		return code
 	}
 	if *stats {
 		return usageError(stderr, errors.New("--stats is only available for fetch"))
 	}
+	if err := checkWeb(fs, *webOn, *webAddr, *outPath); err != nil {
+		return usageError(stderr, err)
+	}
 	c, err := cf.build()
 	if err != nil {
 		return usageError(stderr, err)
+	}
+	if *webOn {
+		c.view.Format = render.JSON // before c.stage: --dedupe folds repeats into a count only in structured output
 	}
 	inc, err := incf.build(c)
 	if err != nil {
@@ -97,6 +105,16 @@ func runTail(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	}
 	view := c.view
 	view.Color = *outPath == "" && useColor(stdout)
+	if *webOn {
+		// The hub is the writer, so each rendered JSON record reaches the browser whole.
+		hub, stopWeb, err := startWeb(*webAddr, stderr)
+		if err != nil {
+			fmt.Fprintf(stderr, "klog: --web: %v\n", err)
+			return 1
+		}
+		defer stopWeb()
+		w = hub
+	}
 	renderer := render.New(w, view)
 
 	out := make(chan parse.Line, 256) // bounded: a slow terminal slows the runners

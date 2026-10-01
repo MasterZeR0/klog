@@ -1,0 +1,277 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>klog</title>
+<style>
+:root { color-scheme: light dark; }
+body { margin: 0; height: 100vh; display: flex; flex-direction: column; font: 13px/1.4 ui-monospace, Menlo, Consolas, monospace; background: Canvas; color: CanvasText; }
+header { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 6px 8px; border-bottom: 1px solid #8884; }
+#q { flex: 1; min-width: 220px; font: inherit; padding: 2px 6px; }
+#q.bad { outline: 2px solid #d33; }
+#err { color: #d33; }
+#status { margin-left: auto; opacity: .7; }
+#chips { display: flex; flex-wrap: wrap; gap: 4px; padding: 4px 8px; border-bottom: 1px solid #8884; }
+#chips:empty { display: none; }
+.chip { border: 1px solid; border-radius: 10px; padding: 0 8px; cursor: pointer; user-select: none; }
+.chip.off { opacity: .4; text-decoration: line-through; }
+#log { flex: 1; overflow: auto; }
+.row.hide { display: none; }
+.line { display: flex; gap: 8px; padding: 0 8px; cursor: pointer; }
+.line:hover { background: #8882; }
+.src { flex: none; font-weight: bold; }
+.ts { flex: none; opacity: .6; }
+.body { white-space: pre-wrap; word-break: break-all; }
+.rep { opacity: .6; }
+.lvl-trace, .lvl-debug { opacity: .6; }
+.lvl-warn { color: #b80; }
+.lvl-error, .lvl-fatal { color: #d33; }
+.detail { margin: 0 8px 4px 24px; padding: 4px 6px; background: #8882; white-space: pre-wrap; word-break: break-all; }
+</style>
+</head>
+<body>
+<header>
+  <input id="q" type="search" placeholder="search" autofocus>
+  <span id="err"></span>
+  <label><input id="re" type="checkbox"> regex</label>
+  <label><input id="cs" type="checkbox"> case</label>
+  <button id="pause">pause</button>
+  <button id="clear">clear</button>
+  <span id="count"></span>
+  <span id="status">connecting…</span>
+</header>
+<div id="chips"></div>
+<div id="log"></div>
+<script>
+"use strict";
+// Log lines are untrusted: every piece of log text goes in through textContent.
+const MAX_ROWS = 20000;
+// Same rule as filter.IsContinuation on the server: a stack-trace line.
+const CONT = /^(\s|Caused by:|Suppressed:|\.\.\. \d+ (more|common frames omitted))/;
+const NUMERIC_LEVELS = { 10: "trace", 20: "debug", 30: "info", 40: "warn", 50: "error", 60: "fatal" };
+const LEVEL_ALIASES = { warning: "warn", err: "error", critical: "error", panic: "fatal" };
+const KNOWN_LEVELS = new Set(["trace", "debug", "info", "warn", "error", "fatal"]);
+
+const $ = id => document.getElementById(id);
+const logEl = $("log"), q = $("q"), reBox = $("re"), csBox = $("cs");
+const rows = [];          // oldest first: {el, src, raw, cont, group, shown}
+const lastBySrc = new Map(); // newest row of each source: a stack-trace line joins its group
+const off = new Set();    // sources hidden by their chip
+const chips = new Map();  // source -> chip element
+let test = () => true;    // current search predicate over a row's raw text
+let vis = 0;              // rows currently shown
+let follow = true;        // keep the view pinned to the newest row
+let state = "connecting…", skipped = false;
+
+function paintStatus() {
+  $("status").textContent = state + (skipped ? " · some lines were skipped" : "");
+}
+function setFollow(v) {
+  follow = v;
+  $("pause").textContent = v ? "pause" : "resume";
+}
+function atBottom() {
+  return logEl.scrollHeight - logEl.scrollTop - logEl.clientHeight < 4;
+}
+logEl.addEventListener("scroll", () => setFollow(atBottom()));
+$("pause").onclick = () => {
+  if (follow) { setFollow(false); return; }
+  logEl.scrollTop = logEl.scrollHeight;
+  setFollow(true);
+};
+
+let queued = false;
+function schedule() { // one count and scroll update per frame, however many rows arrived
+  if (queued) return;
+  queued = true;
+  requestAnimationFrame(() => {
+    queued = false;
+    updateCount();
+    if (follow) logEl.scrollTop = logEl.scrollHeight;
+  });
+}
+function updateCount() { $("count").textContent = vis + " / " + rows.length; }
+
+function colorFor(s) {
+  let h = 0;
+  for (const c of s) h = (h * 31 + c.codePointAt(0)) >>> 0;
+  return "hsl(" + (h % 360) + ",60%,55%)";
+}
+
+function level(j) {
+  if (!j) return "";
+  const keys = Object.keys(j);
+  for (const want of ["level", "severity", "lvl"]) { // first present key wins, like the server
+    const k = keys.find(k => k.toLowerCase() === want);
+    if (k === undefined) continue;
+    const v = j[k];
+    let s = typeof v === "number" ? (NUMERIC_LEVELS[v] || "") : String(v).toLowerCase();
+    s = LEVEL_ALIASES[s] || s;
+    return KNOWN_LEVELS.has(s) ? s : "";
+  }
+  return "";
+}
+
+function timeText(iso) {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (isNaN(d)) return "";
+  return d.toLocaleTimeString("en-GB") + "." + String(d.getMilliseconds()).padStart(3, "0");
+}
+
+function detailText(rec) {
+  const meta = { source: rec.source };
+  if (rec.time) meta.time = rec.time;
+  if (rec.repeats) meta.repeats = rec.repeats;
+  let s = JSON.stringify(meta) + "\n" + (rec.json ? JSON.stringify(rec.json, null, 2) : rec.raw);
+  if (rec.json && /\d{16,}/.test(rec.raw)) {
+    s += "\n(numbers over 2^53 are rounded here; the line above keeps the original)";
+  }
+  return s;
+}
+
+// A record is a line plus the stack-trace lines after it; it is shown when any of its lines matches.
+function setShown(r) {
+  const s = r.group.hit && !off.has(r.src);
+  if (s === r.shown) return;
+  r.shown = s;
+  r.el.classList.toggle("hide", !s);
+  vis += s ? 1 : -1;
+}
+
+function noteSource(src) {
+  if (chips.has(src)) return;
+  const c = document.createElement("span");
+  c.className = "chip";
+  c.textContent = src;
+  c.style.borderColor = colorFor(src);
+  c.onclick = () => {
+    if (off.has(src)) off.delete(src); else off.add(src);
+    c.classList.toggle("off", off.has(src));
+    refilter();
+  };
+  chips.set(src, c);
+  $("chips").appendChild(c);
+}
+
+function addRow(rec) {
+  const src = rec.source, raw = rec.raw;
+  noteSource(src);
+  const cont = !rec.json && CONT.test(raw);
+  const prev = lastBySrc.get(src);
+  const group = cont && prev ? prev.group : { hit: false, rows: [] }; // a trace never splits from its parent
+  const wasHit = group.hit;
+  group.hit = group.hit || test(raw);
+
+  const el = document.createElement("div");
+  el.className = "row hide"; // setShown reveals it below
+  const line = document.createElement("div");
+  const lv = level(rec.json);
+  line.className = "line" + (lv ? " lvl-" + lv : "");
+  const s = document.createElement("span");
+  s.className = "src";
+  s.textContent = "[" + src + "]";
+  s.style.color = colorFor(src);
+  const t = document.createElement("span");
+  t.className = "ts";
+  t.textContent = timeText(rec.time);
+  const b = document.createElement("span");
+  b.className = "body";
+  b.textContent = raw;
+  line.append(s, t, b);
+  if (rec.repeats) {
+    const r = document.createElement("span");
+    r.className = "rep";
+    r.textContent = "… repeated " + rec.repeats + " more time" + (rec.repeats === 1 ? "" : "s");
+    line.append(r);
+  }
+  line.onclick = () => {
+    if (String(getSelection())) return; // the user is selecting text, not asking for detail
+    const open = el.querySelector(".detail");
+    if (open) { open.remove(); return; }
+    const d = document.createElement("pre");
+    d.className = "detail";
+    d.textContent = detailText(rec);
+    el.append(d);
+  };
+  el.append(line);
+
+  const row = { el, src, raw, cont, group, shown: false };
+  rows.push(row);
+  group.rows.push(row);
+  lastBySrc.set(src, row);
+  logEl.append(el);
+  if (group.hit !== wasHit) group.rows.forEach(setShown); // a later trace line can reveal its whole record
+  else setShown(row);
+  while (rows.length > MAX_ROWS) {
+    const old = rows.shift();
+    old.group.rows.shift(); // the oldest row is the first of its group
+    if (old.shown) vis--;
+    if (lastBySrc.get(old.src) === old) lastBySrc.delete(old.src);
+    old.el.remove();
+  }
+  schedule();
+}
+
+function buildTest() { // null when the regex does not compile
+  $("err").textContent = q.title = "";
+  const text = q.value;
+  if (text === "") return () => true;
+  if (reBox.checked) {
+    try {
+      const rx = new RegExp(text, csBox.checked ? "" : "i");
+      return s => rx.test(s);
+    } catch (e) {
+      $("err").textContent = q.title = e.message;
+      return null;
+    }
+  }
+  if (csBox.checked) return s => s.includes(text);
+  const low = text.toLowerCase();
+  return s => s.toLowerCase().includes(low);
+}
+
+function refilter() {
+  const t = buildTest();
+  q.classList.toggle("bad", t === null); // keep the previous results while the regex is invalid
+  if (t !== null) test = t;
+  const seen = new Set();
+  for (const r of rows) {
+    if (!seen.has(r.group)) { seen.add(r.group); r.group.hit = false; }
+    r.group.hit = r.group.hit || test(r.raw);
+  }
+  vis = 0;
+  for (const r of rows) {
+    r.shown = r.group.hit && !off.has(r.src);
+    r.el.classList.toggle("hide", !r.shown);
+    if (r.shown) vis++;
+  }
+  updateCount();
+  if (follow) logEl.scrollTop = logEl.scrollHeight;
+}
+
+q.oninput = refilter;
+reBox.onchange = refilter;
+csBox.onchange = refilter;
+$("clear").onclick = () => {
+  logEl.replaceChildren();
+  rows.length = 0;
+  lastBySrc.clear();
+  vis = 0;
+  updateCount();
+};
+
+const es = new EventSource("events"); // reconnects by itself and resumes from Last-Event-ID
+es.onopen = () => { state = "connected"; paintStatus(); };
+es.onerror = () => { state = "reconnecting…"; paintStatus(); };
+es.onmessage = ev => {
+  let rec;
+  try { rec = JSON.parse(ev.data); } catch (e) { return; }
+  addRow(rec);
+};
+es.addEventListener("gap", () => { skipped = true; paintStatus(); });
+updateCount();
+</script>
+</body>
+</html>

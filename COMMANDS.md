@@ -25,6 +25,8 @@ klog tail [flags]
 | `--since` | duration | 5m | Backlog to show before following (e.g. 10m, 1h, 1d). Must be positive; `--since 0` is a usage error |
 | `--poll` | duration | 5s | How often to look for new and deleted pods |
 | `--wait` | bool | false | Keep polling when no pods match, instead of exiting immediately |
+| `--web` | bool | false | Serve the logs in a browser on a loopback address and print the URL to stderr; stdout stays empty. The page searches the lines it has received (substring, regex, case), hides non-matching lines, keeps stack traces with their parent line and can hide pods. Cannot be combined with `--out`, `--format` or `--template` |
+| `--web-addr` | string | `127.0.0.1:0` | With `--web`: listen address, loopback only (`127.0.0.1`, `::1` or `localhost`); port `0` picks a free port. A usage error without `--web` |
 | `--out` | string | stdout | Append to this file instead of stdout. Each line is written to the file in one write as it is rendered, so `tail -f` on the file works and lines are never torn. The file is append-only (no atomic rename like `fetch --out`) and only one klog should write to it at a time. Nothing is printed to stdout |
 
 **Example:**
@@ -32,6 +34,7 @@ klog tail [flags]
 klog tail -n shop -d checkout --level WARN --since 30m
 klog tail -n shop -l app=web --poll 10s --wait
 klog tail -n shop -d checkout --level WARN --out warnings.log
+klog tail -n shop -d checkout --level WARN --web
 ```
 
 ---
