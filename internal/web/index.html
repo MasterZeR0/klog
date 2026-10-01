@@ -6,10 +6,11 @@
 <title>klog</title>
 <style>
 :root { color-scheme: light dark; }
-body { margin: 0; height: 100vh; display: flex; flex-direction: column; font: 13px/1.4 ui-monospace, Menlo, Consolas, monospace; }
+body { margin: 0; height: 100vh; display: flex; flex-direction: column; font: 13px/1.4 ui-monospace, Menlo, Consolas, monospace; background: Canvas; color: CanvasText; }
 header { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 6px 8px; border-bottom: 1px solid #8884; }
 #q { flex: 1; min-width: 220px; font: inherit; padding: 2px 6px; }
 #q.bad { outline: 2px solid #d33; }
+#err { color: #d33; }
 #status { margin-left: auto; opacity: .7; }
 #chips { display: flex; flex-wrap: wrap; gap: 4px; padding: 4px 8px; border-bottom: 1px solid #8884; }
 #chips:empty { display: none; }
@@ -32,6 +33,7 @@ header { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding:
 <body>
 <header>
   <input id="q" type="search" placeholder="search" autofocus>
+  <span id="err"></span>
   <label><input id="re" type="checkbox"> regex</label>
   <label><input id="cs" type="checkbox"> case</label>
   <button id="pause">pause</button>
@@ -213,6 +215,7 @@ function addRow(rec) {
 }
 
 function buildTest() { // null when the regex does not compile
+  $("err").textContent = q.title = "";
   const text = q.value;
   if (text === "") return () => true;
   if (reBox.checked) {
@@ -220,6 +223,7 @@ function buildTest() { // null when the regex does not compile
       const rx = new RegExp(text, csBox.checked ? "" : "i");
       return s => rx.test(s);
     } catch (e) {
+      $("err").textContent = q.title = e.message;
       return null;
     }
   }
