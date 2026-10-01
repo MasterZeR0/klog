@@ -54,7 +54,7 @@ Rules, all checked before any kubectl call (exit 2 on violation):
   browser formats time in local time and styles rows itself. They are not
   errors, so a saved profile keeps working.
 - `--dedupe` works. Folded lines arrive with `repeats` set and the page shows
-  `x N`.
+  `… repeated N more times` (`1 more time` for one), as the terminal does.
 
 The URL is printed to stderr after pods resolve and the listener is bound. A
 run that exits 3 (no pods) or 1 (kubectl failure) prints no URL. All other
@@ -80,7 +80,14 @@ One job: hold recent records and serve them to browsers. Stdlib only
 - The renderer in `Format: JSON` writes one record per `Write` call
   (`json.Encoder.Encode` issues a single `Write`, newline included). `Hub.Write`
   copies the bytes, assigns the next sequence number and stores the record in a
-  ring of the last **20,000** records.
+  ring of the last **20,000** records, and of at most **64 MiB** of record
+  bytes: the oldest records are evicted first, but the newest is always kept, so
+  one very long line is still delivered once.
+- Sequence numbers (the SSE ids) start at the process start time in
+  nanoseconds, so a restarted klog always issues ids above any earlier run's. A
+  page that reconnects with an id from the old run then sees a gap and is
+  replayed everything the new run holds, instead of silently skipping records.
+  (Added after QA found records lost across a restart.)
 - `Hub.Write` never returns an error and never blocks on a browser.
 - Subscribers each own a bounded queue (256 records). If a subscriber's queue
   is full, the hub closes that subscriber. This is a deliberate difference from
@@ -102,7 +109,10 @@ One job: hold recent records and serve them to browsers. Stdlib only
   records the client asked for, the stream starts at the oldest record held and
   sends an `event: gap` first so the page can show "some lines were skipped".
 - Host check: any request whose `Host` header is not the bound address,
-  `localhost:<port>` or `127.0.0.1:<port>` gets 403. This blocks DNS
+  `localhost:<port>`, `127.0.0.1:<port>` or `[::1]:<port>` gets 403.
+- The listener must really be bound to a loopback IP: after `Listen`, a
+  non-loopback address (for example `localhost` resolving elsewhere) is an
+  error and the listener is closed. This blocks DNS
   rebinding. There are no write endpoints, so no CSRF surface.
 - `Server.Shutdown(ctx)` on exit; open SSE streams are closed.
 
@@ -184,8 +194,8 @@ Table-driven, stdlib `testing`, run under `-race`, in the existing style.
 
 ## Limits (to state in the docs)
 
-- Search covers only what the page holds: the last 20,000 lines the server
-  kept, and at most 20,000 rows in the tab. Older lines need a restart with a
+- Search covers only what the page holds: the last 20,000 lines (or 64 MiB)
+  the server kept, and at most 20,000 rows in the tab. Older lines need a restart with a
   larger `--since`.
 - Constants (ring size, queue size, row limit) are not flags. Add flags if
   real use shows a need.
