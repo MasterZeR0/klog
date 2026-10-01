@@ -265,3 +265,16 @@ func TestPageNeverInjectsHTML(t *testing.T) {
 		}
 	}
 }
+
+func TestServerOldRunIDGetsGapThenEverything(t *testing.T) {
+	hub := NewHub(10, 4)
+	hub.Rebase(1000)
+	hub.Write(rec(1))
+	s := open(t, newTestServer(t, hub), "5") // the browser's id from before a restart
+	if got, want := s.next(t), "event: gap\ndata: {}"; got != want {
+		t.Fatalf("frame %q, want %q", got, want)
+	}
+	if got, want := s.next(t), "id: 1000\ndata: {\"n\":1}"; got != want {
+		t.Fatalf("frame %q, want %q", got, want)
+	}
+}

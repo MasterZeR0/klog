@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"time"
 
 	"klog/internal/web"
 )
@@ -36,6 +37,7 @@ func startWeb(addr string, stderr io.Writer) (hub *web.Hub, stop func(), err err
 		addr = "127.0.0.1:0"
 	}
 	hub = web.NewHub(web.RingSize, web.QueueSize)
+	hub.Rebase(uint64(time.Now().UnixNano())) // ids stay above any earlier run's, so a reconnecting page sees a gap
 	srv, err := web.Start(addr, hub)
 	if err != nil {
 		return nil, nil, err

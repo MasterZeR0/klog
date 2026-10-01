@@ -5,6 +5,7 @@ import (
 	"context"
 	"net"
 	"net/http"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -66,6 +67,33 @@ func sseData(t *testing.T, url string, want ...string) string {
 	}
 }
 
+// firstEventID returns the id of the first event on /events.
+func firstEventID(t *testing.T, url string) uint64 {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	req, _ := http.NewRequestWithContext(ctx, "GET", url+"/events", nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	r := bufio.NewReader(resp.Body)
+	for {
+		line, err := r.ReadString('\n')
+		if rest, ok := strings.CutPrefix(line, "id: "); ok {
+			id, perr := strconv.ParseUint(strings.TrimSpace(rest), 10, 64)
+			if perr != nil {
+				t.Fatal(perr)
+			}
+			return id
+		}
+		if err != nil {
+			t.Fatalf("no event id: %v", err)
+		}
+	}
+}
+
 func TestTailWebServesFilteredRecordsAndKeepsStdoutEmpty(t *testing.T) {
 	f := setup(t)
 	f.Hang("a-1")
@@ -80,6 +108,9 @@ func TestTailWebServesFilteredRecordsAndKeepsStdoutEmpty(t *testing.T) {
 	}
 	if !strings.Contains(got, `"raw":`) {
 		t.Errorf("not a JSON record: %s", got)
+	}
+	if id := firstEventID(t, url); id <= 1000000 {
+		t.Errorf("first event id %d: ids must be time-based so a restart never reuses an old one", id)
 	}
 	if s := out.String(); s != "" {
 		t.Errorf("stdout must stay empty with --web, got %q", s)

@@ -187,3 +187,30 @@ func TestHubClose(t *testing.T) {
 	}
 	h.Write(rec(2)) // writing after Close is harmless
 }
+
+func TestHubRebaseMakesOldIDsAGap(t *testing.T) {
+	h := NewHub(5, 4)
+	h.Rebase(1000)
+	for i := 1; i <= 3; i++ {
+		h.Write(rec(i))
+	}
+	for _, tc := range []struct {
+		name  string
+		after uint64
+		gap   bool
+	}{
+		{"id from an earlier run", 5, true},
+		{"fresh connection", 0, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := h.Subscribe(tc.after)
+			defer s.Close()
+			if got, want := seqs(s.Replay), []uint64{1000, 1001, 1002}; !reflect.DeepEqual(got, want) {
+				t.Fatalf("replay %v, want %v", got, want)
+			}
+			if s.Gap != tc.gap {
+				t.Fatalf("gap %v, want %v", s.Gap, tc.gap)
+			}
+		})
+	}
+}

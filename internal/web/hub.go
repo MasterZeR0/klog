@@ -36,6 +36,15 @@ func NewHub(ring, queue int) *Hub {
 	return &Hub{buf: make([]Event, ring), next: 1, queue: queue, subs: map[*Sub]struct{}{}}
 }
 
+// Rebase sets the sequence number of the next record. Call it before the first
+// Write only: it exists so a restarted process issues ids above every id an
+// earlier run gave a browser, which then sees a gap instead of losing records.
+func (h *Hub) Rebase(base uint64) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.next = base
+}
+
 // Write stores one record and hands it to every subscriber. It never blocks:
 // a subscriber whose queue is full is dropped and must reconnect, so a stalled
 // browser tab cannot stall kubectl.
