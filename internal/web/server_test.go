@@ -278,3 +278,50 @@ func TestServerOldRunIDGetsGapThenEverything(t *testing.T) {
 		t.Fatalf("frame %q, want %q", got, want)
 	}
 }
+
+func TestHandlerAllowsExtraHost(t *testing.T) {
+	ts := httptest.NewUnstartedServer(nil)
+	_, port, _ := net.SplitHostPort(ts.Listener.Addr().String())
+	ts.Config.Handler = Handler(NewHub(3, 2), port, "127.0.0.2:"+port)
+	ts.Start()
+	defer ts.Close()
+	for host, want := range map[string]int{
+		"127.0.0.2:" + port: 200,
+		"127.0.0.3:" + port: 403,
+	} {
+		req, _ := http.NewRequest("GET", ts.URL+"/", nil)
+		req.Host = host
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != want {
+			t.Errorf("Host %q: status %d, want %d", host, resp.StatusCode, want)
+		}
+	}
+}
+
+func TestStartServesOnItsBoundLoopbackAddress(t *testing.T) {
+	hub := NewHub(3, 2)
+	s, err := Start("127.0.0.2:0", hub)
+	if err != nil {
+		t.Skipf("127.0.0.2 unavailable: %v", err)
+	}
+	defer s.Close()
+	for host, want := range map[string]int{
+		s.ln.Addr().String(): 200,
+		"evil.example:80":    403,
+	} {
+		req, _ := http.NewRequest("GET", s.URL()+"/", nil)
+		req.Host = host
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != want {
+			t.Errorf("Host %q: status %d, want %d", host, resp.StatusCode, want)
+		}
+	}
+}

@@ -34,12 +34,17 @@ func CheckAddr(addr string) error {
 
 // Handler serves the page and the event stream for hub. port is the port the
 // listener is bound to: a request for any other Host is refused, which blocks
-// DNS rebinding. There are no write endpoints.
-func Handler(hub *Hub, port string) http.Handler {
+// DNS rebinding. extra lists further allowed Host values, such as the bound
+// address when it is a loopback IP other than 127.0.0.1. There are no write
+// endpoints.
+func Handler(hub *Hub, port string, extra ...string) http.Handler {
 	ping := pingEvery
 	allowed := map[string]bool{}
 	for _, h := range []string{"127.0.0.1", "localhost", "::1"} {
 		allowed[net.JoinHostPort(h, port)] = true
+	}
+	for _, h := range extra {
+		allowed[h] = true
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
@@ -139,7 +144,7 @@ func Start(addr string, hub *Hub) (*Server, error) {
 		return nil, err
 	}
 	_, port, _ := net.SplitHostPort(ln.Addr().String())
-	s := &Server{hub: hub, ln: ln, srv: &http.Server{Handler: Handler(hub, port)}}
+	s := &Server{hub: hub, ln: ln, srv: &http.Server{Handler: Handler(hub, port, ln.Addr().String())}}
 	go s.srv.Serve(ln)
 	return s, nil
 }
