@@ -1,6 +1,7 @@
 package web
 
 import (
+	"bytes"
 	"fmt"
 	"reflect"
 	"testing"
@@ -212,5 +213,57 @@ func TestHubRebaseMakesOldIDsAGap(t *testing.T) {
 				t.Fatalf("gap %v, want %v", s.Gap, tc.gap)
 			}
 		})
+	}
+}
+
+// heldBytes is a test hook: the sum of the records the ring holds.
+func (h *Hub) heldBytes() int {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	sum := 0
+	for i := 0; i < h.n; i++ {
+		sum += len(h.buf[(h.start+i)%len(h.buf)].Data)
+	}
+	return sum
+}
+
+func TestHubByteBudgetEvictsOldest(t *testing.T) {
+	h := NewHub(100, 4)
+	h.budget = 100
+	line := append(bytes.Repeat([]byte("x"), 39), '\n') // 39 bytes of data
+	for i := 0; i < 5; i++ {
+		h.Write(line)
+	}
+	s := h.Subscribe(1)
+	defer s.Close()
+	if got, want := seqs(s.Replay), []uint64{4, 5}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("replay %v, want %v", got, want)
+	}
+	if !s.Gap {
+		t.Fatal("asking for evicted records must report a gap")
+	}
+	if h.bytes != h.heldBytes() || h.bytes > 100 {
+		t.Fatalf("bytes %d, held %d", h.bytes, h.heldBytes())
+	}
+}
+
+func TestHubKeepsOneRecordBiggerThanBudget(t *testing.T) {
+	h := NewHub(10, 4)
+	h.budget = 10
+	h.Write(append(bytes.Repeat([]byte("x"), 500), '\n'))
+	s := h.Subscribe(0)
+	defer s.Close()
+	if len(s.Replay) != 1 || len(s.Replay[0].Data) != 500 {
+		t.Fatalf("replay %d records, want the one oversized record", len(s.Replay))
+	}
+}
+
+func TestHubByteSumSurvivesCountEviction(t *testing.T) {
+	h := NewHub(4, 4)
+	for i := 1; i <= 11; i++ {
+		h.Write(rec(i * 1000)) // varying lengths, ring overwrites
+	}
+	if h.bytes != h.heldBytes() {
+		t.Fatalf("bytes %d, held %d", h.bytes, h.heldBytes())
 	}
 }

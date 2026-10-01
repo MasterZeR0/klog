@@ -7,8 +7,9 @@ import (
 )
 
 const (
-	RingSize  = 20000 // records kept for replay
-	QueueSize = 256   // live records buffered per subscriber
+	RingSize  = 20000    // records kept for replay
+	QueueSize = 256      // live records buffered per subscriber
+	RingBytes = 64 << 20 // record bytes kept for replay; lines can be hundreds of KiB
 )
 
 // Event is one record. Seq is its SSE id; Data is the JSON record without a
@@ -27,13 +28,15 @@ type Hub struct {
 	start  int     // slot of the oldest record
 	n      int     // records held
 	next   uint64  // sequence number of the next record; the first is 1
+	bytes  int     // sum of len(Data) over the held records
+	budget int     // evict the oldest records while bytes exceeds this
 	queue  int
 	subs   map[*Sub]struct{}
 	closed bool
 }
 
 func NewHub(ring, queue int) *Hub {
-	return &Hub{buf: make([]Event, ring), next: 1, queue: queue, subs: map[*Sub]struct{}{}}
+	return &Hub{buf: make([]Event, ring), next: 1, budget: RingBytes, queue: queue, subs: map[*Sub]struct{}{}}
 }
 
 // Rebase sets the sequence number of the next record. Call it before the first
@@ -62,8 +65,16 @@ func (h *Hub) Write(p []byte) (int, error) {
 		h.buf[(h.start+h.n)%len(h.buf)] = e
 		h.n++
 	} else {
+		h.bytes -= len(h.buf[h.start].Data)
 		h.buf[h.start] = e
 		h.start = (h.start + 1) % len(h.buf)
+	}
+	h.bytes += len(data)
+	for h.bytes > h.budget && h.n > 1 { // never evict the newest record: one huge line is still delivered
+		h.bytes -= len(h.buf[h.start].Data)
+		h.buf[h.start] = Event{}
+		h.start = (h.start + 1) % len(h.buf)
+		h.n--
 	}
 	for s := range h.subs {
 		select {
